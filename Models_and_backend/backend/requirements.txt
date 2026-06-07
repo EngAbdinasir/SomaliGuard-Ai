@@ -1,0 +1,20 @@
+flask
+flask-cors
+Flask-Limiter
+gunicorn
+redis
+torch
+transformers
+easyocr
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+pandas==2.1.4; python_version < "3.13"
+pandas>=2.2.3; python_version >= "3.13"
+pillow
+werkzeug
+mysql-connector-python
+bcrypt
+PyJWT
+python-dotenv
+google-auth
+pytest

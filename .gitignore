@@ -1,0 +1,10 @@
+.DS_Store
+**/.env
+**/__pycache__/
+**/.pytest_cache/
+**/*.pyc
+Front_end/node_modules/
+Front_end/dist/
+Models_and_backend/backend/uploads/
+Models_and_backend/models/**/model.safetensors
+outputs/
