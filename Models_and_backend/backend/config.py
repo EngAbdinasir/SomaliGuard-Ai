@@ -51,6 +51,9 @@ class Config:
 
     MAIN_ADMIN_EMAIL = os.getenv("MAIN_ADMIN_EMAIL", "fiaa89013292@gmail.com")
     CONTACT_TO_EMAIL = os.getenv("CONTACT_TO_EMAIL", MAIN_ADMIN_EMAIL)
+    BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+    BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", os.getenv("SMTP_USER", ""))
+    BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "SomaliGuard AI")
     SMTP_HOST = os.getenv("SMTP_HOST", "")
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USER = os.getenv("SMTP_USER", "")
@@ -61,9 +64,13 @@ class Config:
 if Config.IS_PRODUCTION:
     missing = [
         name
-        for name in ("JWT_SECRET", "DB_PASSWORD", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD")
+        for name in ("JWT_SECRET", "DB_PASSWORD")
         if not os.getenv(name)
     ]
+    if not Config.BREVO_API_KEY and not (
+        Config.SMTP_HOST and Config.SMTP_USER and Config.SMTP_PASSWORD
+    ):
+        missing.append("BREVO_API_KEY or SMTP configuration")
     if Config.JWT_SECRET == "change-this-dev-secret":
         missing.append("JWT_SECRET")
     if missing:

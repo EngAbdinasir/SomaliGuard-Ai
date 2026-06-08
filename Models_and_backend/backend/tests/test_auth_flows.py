@@ -3,6 +3,35 @@ from datetime import datetime, timedelta, UTC
 from conftest import auth_header
 
 
+def test_send_email_uses_brevo_api_when_configured(app_module, monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.header_items())
+        captured["body"] = request.data.decode("utf-8")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(app_module.Config, "BREVO_API_KEY", "test-api-key")
+    monkeypatch.setattr(app_module.Config, "BREVO_SENDER_EMAIL", "sender@example.com")
+    monkeypatch.setattr(app_module, "urlopen", fake_urlopen)
+
+    app_module.send_email("recipient@example.com", "Test subject", "Test content")
+
+    assert captured["url"] == "https://api.brevo.com/v3/smtp/email"
+    assert {key.lower(): value for key, value in captured["headers"].items()}["api-key"] == "test-api-key"
+    assert '"email": "recipient@example.com"' in captured["body"]
+    assert captured["timeout"] == 20
+
+
 def test_register_rejects_invalid_email(client):
     response = client.post(
         "/register",

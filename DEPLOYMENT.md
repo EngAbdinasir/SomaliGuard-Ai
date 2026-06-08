@@ -64,6 +64,11 @@ MODEL_REVIEW_CONFIDENCE_THRESHOLD=0.65
 FRONTEND_URL=https://your-frontend.vercel.app
 CORS_ORIGINS=https://your-frontend.vercel.app
 CONTACT_TO_EMAIL=your-email@example.com
+# Recommended on Hugging Face Spaces because SMTP port 587 is blocked.
+BREVO_API_KEY=your-brevo-api-key
+BREVO_SENDER_EMAIL=your-verified-brevo-sender@example.com
+BREVO_SENDER_NAME=SomaliGuard AI
+# SMTP can be used on hosts that allow outbound port 587.
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@example.com

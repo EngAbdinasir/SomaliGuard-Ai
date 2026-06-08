@@ -2,7 +2,10 @@ from secrets import randbelow, token_urlsafe
 import smtplib
 import re
 from functools import wraps
+import json
 from urllib.parse import quote
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import uuid4
 from email.message import EmailMessage
 
@@ -270,16 +273,62 @@ def validate_reset_password(password, confirm_password=None):
     return None
 
 
-def send_contact_email(name, sender_email, subject, message):
+def send_email(to_email, subject, content, reply_to=None):
+    if Config.BREVO_API_KEY:
+        sender_email = Config.BREVO_SENDER_EMAIL or Config.SMTP_USER
+        if not sender_email:
+            raise RuntimeError("Set BREVO_SENDER_EMAIL when using BREVO_API_KEY.")
+
+        payload = {
+            "sender": {"name": Config.BREVO_SENDER_NAME, "email": sender_email},
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "textContent": content,
+        }
+        if reply_to:
+            payload["replyTo"] = {"email": reply_to}
+
+        request_data = Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "accept": "application/json",
+                "api-key": Config.BREVO_API_KEY,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request_data, timeout=20):
+                return
+        except HTTPError as exc:
+            response_body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Brevo email API returned HTTP {exc.code}: {response_body}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Brevo email API could not be reached: {exc.reason}") from exc
+
     if not Config.SMTP_HOST or not Config.SMTP_USER or not Config.SMTP_PASSWORD:
-        raise RuntimeError("Email sending is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASSWORD in .env.")
+        raise RuntimeError("Email sending is not configured. Set BREVO_API_KEY or SMTP settings.")
 
     email_message = EmailMessage()
-    email_message["Subject"] = f"SomaliGuard AI Contact: {subject}"
+    email_message["Subject"] = subject
     email_message["From"] = Config.SMTP_USER
-    email_message["To"] = Config.CONTACT_TO_EMAIL
-    email_message["Reply-To"] = sender_email
-    email_message.set_content(
+    email_message["To"] = to_email
+    if reply_to:
+        email_message["Reply-To"] = reply_to
+    email_message.set_content(content)
+
+    with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20) as server:
+        if Config.SMTP_USE_TLS:
+            server.starttls()
+        server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+        server.send_message(email_message)
+
+
+def send_contact_email(name, sender_email, subject, message):
+    send_email(
+        Config.CONTACT_TO_EMAIL,
+        f"SomaliGuard AI Contact: {subject}",
         "\n".join([
             "New SomaliGuard AI contact message",
             "",
@@ -289,26 +338,16 @@ def send_contact_email(name, sender_email, subject, message):
             "",
             "Message:",
             message,
-        ])
+        ]),
+        reply_to=sender_email,
     )
-
-    with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20) as server:
-        if Config.SMTP_USE_TLS:
-            server.starttls()
-        server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
-        server.send_message(email_message)
 
 
 def send_password_reset_email(user_email, reset_token):
-    if not Config.SMTP_HOST or not Config.SMTP_USER or not Config.SMTP_PASSWORD:
-        raise RuntimeError("Email sending is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASSWORD in .env.")
-
     reset_link = f"{Config.FRONTEND_URL.rstrip('/')}/reset-password?token={quote(reset_token)}"
-    email_message = EmailMessage()
-    email_message["Subject"] = "Reset your SomaliGuard AI password"
-    email_message["From"] = Config.SMTP_USER
-    email_message["To"] = user_email
-    email_message.set_content(
+    send_email(
+        user_email,
+        "Reset your SomaliGuard AI password",
         "\n".join([
             "We received a request to reset your SomaliGuard AI password.",
             "",
@@ -317,25 +356,14 @@ def send_password_reset_email(user_email, reset_token):
             "",
             f"This token expires in {Config.PASSWORD_RESET_EXPIRES_MINUTES} minutes.",
             "If you did not request this password reset, you can ignore this email.",
-        ])
+        ]),
     )
-
-    with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20) as server:
-        if Config.SMTP_USE_TLS:
-            server.starttls()
-        server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
-        server.send_message(email_message)
 
 
 def send_email_verification_code(user_email, verification_code):
-    if not Config.SMTP_HOST or not Config.SMTP_USER or not Config.SMTP_PASSWORD:
-        raise RuntimeError("Email sending is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASSWORD in .env.")
-
-    email_message = EmailMessage()
-    email_message["Subject"] = "Verify your SomaliGuard AI email"
-    email_message["From"] = Config.SMTP_USER
-    email_message["To"] = user_email
-    email_message.set_content(
+    send_email(
+        user_email,
+        "Verify your SomaliGuard AI email",
         "\n".join([
             "Welcome to SomaliGuard AI.",
             "",
@@ -344,14 +372,8 @@ def send_email_verification_code(user_email, verification_code):
             "",
             f"This code expires in {Config.EMAIL_VERIFICATION_EXPIRES_MINUTES} minutes.",
             "If you did not request this code, you can ignore this email.",
-        ])
+        ]),
     )
-
-    with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20) as server:
-        if Config.SMTP_USE_TLS:
-            server.starttls()
-        server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
-        server.send_message(email_message)
 
 
 @app.route("/", methods=["GET"])
@@ -553,7 +575,9 @@ def forgot_password():
         reset_token = token_urlsafe(32)
         create_password_reset_token(user["id"], reset_token)
 
-        if Config.SMTP_HOST and Config.SMTP_USER and Config.SMTP_PASSWORD:
+        if Config.BREVO_API_KEY or (
+            Config.SMTP_HOST and Config.SMTP_USER and Config.SMTP_PASSWORD
+        ):
             send_password_reset_email(user["email"], reset_token)
         elif Config.IS_PRODUCTION:
             raise RuntimeError("Password reset email is not configured.")
