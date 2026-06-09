@@ -56,13 +56,14 @@ const Register = () => {
   };
 
   const validateSignupDetails = () => {
-    if (!name || !email || !password) {
+    if (!name.trim() || !email.trim() || !password) {
       return 'Please fill in all fields.';
     }
 
-    if (password.length < 6) {
-      return 'Password must be at least 6 characters.';
-    }
+    if (password.length < 8) return 'Password must be at least 8 characters.';
+    if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.';
+    if (!/[a-z]/.test(password)) return 'Password must include at least one lowercase letter.';
+    if (!/[\d\W_]/.test(password)) return 'Password must include at least one number or symbol.';
 
     return '';
   };
@@ -111,8 +112,8 @@ const Register = () => {
       return;
     }
 
-    if (!verificationCode) {
-      setError('Please enter the verification code we sent to your email.');
+    if (!/^\d{6}$/.test(verificationCode)) {
+      setError('Please enter the complete 6-digit verification code.');
       return;
     }
 
@@ -244,7 +245,7 @@ const Register = () => {
                 onToggle={() => setShowPassword((value) => !value)}
                 autoComplete="new-password"
               />
-              <small className="auth-help-text">Must be at least 6 characters.</small>
+              <small className="auth-help-text">Use at least 8 characters with uppercase, lowercase, and a number or symbol.</small>
             </AuthField>
 
             {awaitingVerification && (

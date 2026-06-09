@@ -259,7 +259,7 @@ def validate_user_payload(full_name, email, role, password="", require_password=
     return None
 
 
-def validate_reset_password(password, confirm_password=None):
+def validate_account_password(password, confirm_password=None):
     if len(password or "") < 8:
         return "Password must be at least 8 characters."
     if not re.search(r"[A-Z]", password):
@@ -454,10 +454,13 @@ def register():
         return jsonify({"error": "full_name, email, and password are required."}), 400
     if not is_valid_email(email):
         return jsonify({"error": "A valid email address is required."}), 400
-    if len(password) < 6:
-        return jsonify({"error": "Password must be at least 6 characters."}), 400
+    password_error = validate_account_password(password)
+    if password_error:
+        return jsonify({"error": password_error}), 400
     if not verification_code:
         return jsonify({"error": "verification_code is required."}), 400
+    if not verification_code.isdigit() or len(verification_code) != 6:
+        return jsonify({"error": "verification_code must be exactly 6 digits."}), 400
 
     try:
         verification_record = verify_email_verification_code(email, verification_code)
@@ -600,7 +603,7 @@ def reset_password():
 
     if not reset_token or not new_password or confirm_password is None:
         return jsonify({"error": "token, new_password, and confirm_password are required."}), 400
-    validation_error = validate_reset_password(new_password, confirm_password)
+    validation_error = validate_account_password(new_password, confirm_password)
     if validation_error:
         return jsonify({"error": validation_error}), 400
 

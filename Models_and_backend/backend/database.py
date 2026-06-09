@@ -252,6 +252,10 @@ def create_password_reset_token(user_id, token, expires_minutes=None):
     try:
         cursor = connection.cursor()
         cursor.execute(
+            "UPDATE password_reset_tokens SET used = TRUE WHERE user_id = %s AND used = FALSE",
+            (user_id,),
+        )
+        cursor.execute(
             """
             INSERT INTO password_reset_tokens (user_id, token, expires_at)
             VALUES (%s, %s, %s)
@@ -290,10 +294,9 @@ def update_user_password(user_id, password_hash, reset_token=None):
             (password_hash, user_id),
         )
         if reset_token:
-            reset_token_hash = hash_reset_token(reset_token)
             cursor.execute(
-                "UPDATE password_reset_tokens SET used = TRUE WHERE token = %s",
-                (reset_token_hash,),
+                "UPDATE password_reset_tokens SET used = TRUE WHERE user_id = %s AND used = FALSE",
+                (user_id,),
             )
         connection.commit()
         return cursor.rowcount

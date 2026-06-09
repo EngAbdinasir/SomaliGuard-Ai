@@ -42,6 +42,36 @@ def test_register_rejects_invalid_email(client):
     assert response.get_json()["error"] == "A valid email address is required."
 
 
+def test_register_rejects_weak_password(client):
+    response = client.post(
+        "/register",
+        json={
+            "full_name": "New User",
+            "email": "new@example.com",
+            "password": "secret123",
+            "verification_code": "123456",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Password must include at least one uppercase letter."
+
+
+def test_register_rejects_incomplete_verification_code(client):
+    response = client.post(
+        "/register",
+        json={
+            "full_name": "New User",
+            "email": "new@example.com",
+            "password": "Strongpass1",
+            "verification_code": "123",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "verification_code must be exactly 6 digits."
+
+
 def test_send_verification_code_creates_code_and_sends_email(client, app_module, monkeypatch):
     created = {}
 
@@ -76,7 +106,7 @@ def test_register_requires_valid_verification_code(client, app_module, monkeypat
         json={
             "full_name": "New User",
             "email": "new@example.com",
-            "password": "secret123",
+            "password": "Strongpass1",
             "verification_code": "123456",
         },
     )
@@ -107,7 +137,7 @@ def test_register_creates_user_after_email_verification(client, app_module, monk
         json={
             "full_name": "New User",
             "email": "new@example.com",
-            "password": "secret123",
+            "password": "Strongpass1",
             "verification_code": "123456",
         },
     )
@@ -119,7 +149,7 @@ def test_register_creates_user_after_email_verification(client, app_module, monk
     assert created == {
         "full_name": "New User",
         "email": "new@example.com",
-        "password_hash": "hashed:secret123",
+        "password_hash": "hashed:Strongpass1",
         "role": "user",
         "code_id": 99,
     }
