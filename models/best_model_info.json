@@ -1,0 +1,16 @@
+{
+  "best_model_name": "SomBERTa",
+  "model_type": "Transformer",
+  "inference_type": "transformer",
+  "model_path": "models/active_model",
+  "tokenizer_path": "models/active_model",
+  "label_mapping_path": "models/label_mapping.json",
+  "preprocessing_config_path": "models/active_model/preprocessing_config.json",
+  "max_len": 128,
+  "metrics": {
+    "Accuracy": 0.9675141242937854,
+    "Precision": 0.9701754385964912,
+    "Recall": 0.9501718213058419,
+    "F1-score": 0.9600694444444445
+  }
+}

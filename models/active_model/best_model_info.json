@@ -1,0 +1,15 @@
+{
+    "best_model_name": "SomBERTa",
+    "best_model_type": "Transformer",
+    "accuracy": 0.9675141242937854,
+    "precision": 0.9701754385964912,
+    "recall": 0.9501718213058419,
+    "f1_score": 0.9600694444444445,
+    "label_mapping": {
+        "0": "Non-offensive",
+        "1": "Offensive"
+    },
+    "max_len": 128,
+    "stopword_removal_used": false,
+    "backend_model_folder": "models/active_model"
+}

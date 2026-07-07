@@ -1,0 +1,11 @@
+{
+    "lowercase": true,
+    "remove_urls": true,
+    "remove_mentions": true,
+    "remove_hashtag_symbol": true,
+    "remove_punctuation": true,
+    "remove_numbers": true,
+    "normalize_repeated_characters": true,
+    "remove_extra_spaces": true,
+    "stopword_removal_used": false
+}

@@ -1,0 +1,15 @@
+{
+    "project_name": "Somali Offensive Text Classification",
+    "task": "Binary text classification",
+    "best_model_name": "SomBERTa",
+    "best_model_type": "Transformer",
+    "best_model_folder": "models/active_model",
+    "labels": {
+        "0": "Non-offensive",
+        "1": "Offensive"
+    },
+    "max_len": 128,
+    "stopword_removal_used": false,
+    "results_file": "docs/model_results/all_model_results.csv",
+    "cleaned_dataset_file": "data/cleaned_dataset_no_stopword_removal.csv"
+}

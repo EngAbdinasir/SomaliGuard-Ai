@@ -1,105 +1,101 @@
-# SomaliGuard AI Deployment
+# SomaliGuard AI Deployment Guide
 
-Recommended setup:
+SomaliGuard AI is organized as a full-stack machine learning system:
 
-- Frontend: Vercel
-- Backend, MySQL, and persistent uploads: Railway
-- Backend service root directory: `Models_and_backend`
-- Backend volume mount path: `/data`
+- `frontend/` - React and Vite web interface.
+- `backend/` - Flask API for authentication, predictions, OCR, history, and email flows.
+- `models/` - Current trained SomBERTa offensive-language classifier and preprocessing files.
+- `Dockerfile` - Backend container configuration for Hugging Face Spaces or another Docker host.
 
-The backend includes a 678 MB mBERT model plus PyTorch and EasyOCR. Use a Railway
-service with at least 4 GB RAM. The Gunicorn configuration intentionally uses one
-worker so the model is loaded into memory only once.
+## Backend
 
-## 1. Before Deploying
+The backend loads the current model from:
 
-1. Push the project to a private GitHub repository.
-2. Never commit either `.env` file.
-3. Rotate any password that has previously been stored in a local `.env` file.
-4. Create a long random production `JWT_SECRET`.
-5. Create a Hugging Face model repository and upload the files from
-   `Models_and_backend/models/transformer_models/mBERT_final`.
+```text
+models/active_model
+```
 
-The 678 MB `model.safetensors` file is intentionally excluded from GitHub and
-the Docker image because normal GitHub repositories reject files over 100 MB.
-The backend downloads it from Hugging Face on its first online startup.
+It also uses:
 
-## 2. Deploy MySQL on Railway
+```text
+models/label_mapping.json
+models/best_model_info.json
+models/active_model/preprocessing_config.json
+```
 
-1. Create a Railway project.
-2. Add a MySQL database service.
-3. Import `Models_and_backend/backend/database_schema.sql` into that database.
+The model was trained with Somali text cleaning without stopword removal, so keep the SomBERTa model folder and preprocessing file together.
 
-Railway exposes MySQL connection values such as `MYSQLHOST`, `MYSQLPORT`,
-`MYSQLUSER`, `MYSQLPASSWORD`, and `MYSQLDATABASE`. Reference those values from
-the backend variables below.
+Run locally:
 
-## 3. Deploy the Backend on Railway
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
 
-1. Add a service from the GitHub repository.
-2. Set the service root directory to `Models_and_backend`.
-3. Railway will detect `Models_and_backend/Dockerfile`.
-4. Add a public domain to the backend service.
-5. Add a volume mounted at `/data`.
-6. Set these service variables:
+## Frontend
+
+Run locally:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Set the local API URL in `frontend/.env`:
 
 ```env
-APP_ENV=production
-DB_HOST=${{MySQL.MYSQLHOST}}
-DB_PORT=${{MySQL.MYSQLPORT}}
-DB_USER=${{MySQL.MYSQLUSER}}
-DB_PASSWORD=${{MySQL.MYSQLPASSWORD}}
-DB_NAME=${{MySQL.MYSQLDATABASE}}
+VITE_API_BASE_URL=http://localhost:5001
+```
+
+## Environment Variables
+
+Backend variables:
+
+```env
+APP_ENV=development
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your-local-password
+DB_NAME=somali_offensive_detection
 DB_UNIX_SOCKET=
-JWT_SECRET=replace-with-a-long-random-production-secret
-GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
-UPLOAD_FOLDER=/data/uploads
-HF_HOME=/data/huggingface
-HF_MODEL_REPO_ID=your-hugging-face-username/your-model-repository
-# Only set HF_TOKEN if the Hugging Face model repository is private.
-HF_TOKEN=your-hugging-face-read-token
+JWT_SECRET=replace-with-a-long-random-secret
+UPLOAD_FOLDER=uploads
 RATELIMIT_STORAGE_URI=memory://
 RATELIMIT_ENABLED=true
 MODEL_REVIEW_CONFIDENCE_THRESHOLD=0.65
-FRONTEND_URL=https://your-frontend.vercel.app
-CORS_ORIGINS=https://your-frontend.vercel.app
-CONTACT_TO_EMAIL=your-email@example.com
-# Recommended on Hugging Face Spaces because SMTP port 587 is blocked.
-BREVO_API_KEY=your-brevo-api-key
-BREVO_SENDER_EMAIL=your-verified-brevo-sender@example.com
-BREVO_SENDER_NAME=SomaliGuard AI
-# SMTP can be used on hosts that allow outbound port 587.
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=your-email@example.com
-SMTP_PASSWORD=your-new-gmail-app-password
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
 SMTP_USE_TLS=true
+CONTACT_TO_EMAIL=your-email@gmail.com
 ```
 
-Replace `MySQL` in Railway references if the database service has another name.
-After deployment, open the backend domain. The root endpoint should return the
-API status JSON.
+## Database
 
-## 4. Deploy the Frontend on Vercel
+Create the MySQL database and import:
 
-1. Import the same GitHub repository into Vercel.
-2. Set the project root directory to `Front_end`.
-3. Keep the detected Vite build settings.
-4. Add these Vercel environment variables:
-
-```env
-VITE_API_BASE_URL=https://your-backend.up.railway.app
-VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+```text
+backend/database_schema.sql
 ```
 
-5. Deploy the frontend.
-6. Update the Railway backend variables `FRONTEND_URL` and `CORS_ORIGINS` with
-   the final Vercel URL, then redeploy the backend.
+The required tables include users, verification codes, password reset tokens, prediction history, uploaded images, and classification results.
 
-## 5. Final Checks
+## Deployment Notes
 
-- Register and verify a new account.
-- Log in and run text prediction.
-- Upload an image and confirm it remains available after a backend redeploy.
-- Confirm password-reset links use the public frontend URL.
-- Confirm `/history` and the admin dashboard load saved records.
+For Vercel, deploy only the frontend:
+
+```text
+Root Directory: frontend
+Build Command: npm run build
+Output Directory: dist
+```
+
+For Hugging Face Spaces or a Docker host, deploy the backend using the root `Dockerfile`. The container copies `backend/` and `models/` into the image.
+
+The model file `models/active_model/model.safetensors` is large. If pushing to GitHub or Hugging Face, use Git LFS or upload the model directly through Hugging Face.
