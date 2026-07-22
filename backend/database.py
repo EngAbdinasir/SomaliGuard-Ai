@@ -70,6 +70,77 @@ def ensure_email_verification_table():
         connection.close()
 
 
+def ensure_classification_results_table():
+    connection = get_db_connection()
+    cursor = None
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS classification_results (
+                result_id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NULL,
+                input_type VARCHAR(20) NOT NULL DEFAULT 'text',
+                image_filename VARCHAR(255),
+                image_path VARCHAR(255),
+                original_text TEXT,
+                extracted_text TEXT,
+                cleaned_text TEXT,
+                prediction_label VARCHAR(50) NOT NULL,
+                confidence_score FLOAT,
+                model_name VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT fk_classification_results_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            SELECT COLUMN_NAME, IS_NULLABLE
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = 'classification_results'
+            """,
+            (Config.DB_NAME,),
+        )
+        columns = {row["COLUMN_NAME"]: row for row in cursor.fetchall()}
+
+        additions = [
+            ("input_type", "ALTER TABLE classification_results ADD COLUMN input_type VARCHAR(20) NOT NULL DEFAULT 'text' AFTER user_id"),
+            ("image_filename", "ALTER TABLE classification_results ADD COLUMN image_filename VARCHAR(255) NULL AFTER input_type"),
+            ("image_path", "ALTER TABLE classification_results ADD COLUMN image_path VARCHAR(255) NULL AFTER image_filename"),
+            ("original_text", "ALTER TABLE classification_results ADD COLUMN original_text TEXT NULL AFTER image_path"),
+            ("model_name", "ALTER TABLE classification_results ADD COLUMN model_name VARCHAR(100) NULL AFTER confidence_score"),
+        ]
+        for column_name, statement in additions:
+            if column_name not in columns:
+                cursor.execute(statement)
+
+        if columns.get("image_id") and columns["image_id"].get("IS_NULLABLE") == "NO":
+            cursor.execute(
+                """
+                SELECT CONSTRAINT_NAME
+                FROM information_schema.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = %s
+                  AND TABLE_NAME = 'classification_results'
+                  AND COLUMN_NAME = 'image_id'
+                  AND REFERENCED_TABLE_NAME IS NOT NULL
+                """,
+                (Config.DB_NAME,),
+            )
+            for row in cursor.fetchall():
+                cursor.execute(f"ALTER TABLE classification_results DROP FOREIGN KEY {row['CONSTRAINT_NAME']}")
+            cursor.execute("ALTER TABLE classification_results MODIFY image_id INT NULL")
+
+        connection.commit()
+    finally:
+        if cursor:
+            cursor.close()
+        connection.close()
+
+
 def ensure_database_indexes():
     indexes = [
         {
@@ -91,6 +162,16 @@ def ensure_database_indexes():
             "table": "users",
             "name": "idx_users_role_active",
             "columns": "role, is_active",
+        },
+        {
+            "table": "classification_results",
+            "name": "idx_classification_results_user_created",
+            "columns": "user_id, created_at",
+        },
+        {
+            "table": "classification_results",
+            "name": "idx_classification_results_input_created",
+            "columns": "input_type, created_at",
         },
     ]
     connection = get_db_connection()
@@ -305,6 +386,43 @@ def update_user_password(user_id, password_hash, reset_token=None):
         connection.close()
 
 
+def _insert_classification_result(
+    cursor,
+    user_id,
+    input_type,
+    image_filename=None,
+    image_path=None,
+    original_text=None,
+    extracted_text=None,
+    cleaned_text=None,
+    prediction=None,
+    confidence=None,
+    model_name=None,
+):
+    cursor.execute(
+        """
+        INSERT INTO classification_results (
+            user_id, input_type, image_filename, image_path, original_text,
+            extracted_text, cleaned_text, prediction_label, confidence_score, model_name
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            user_id,
+            input_type,
+            image_filename,
+            image_path,
+            original_text,
+            extracted_text,
+            cleaned_text,
+            prediction,
+            confidence,
+            model_name,
+        ),
+    )
+    return cursor.lastrowid
+
+
 def save_prediction(
     user_id,
     input_type,
@@ -339,8 +457,27 @@ def save_prediction(
                 model_name,
             ),
         )
+        history_id = cursor.lastrowid
+        classification_result_id = _insert_classification_result(
+            cursor=cursor,
+            user_id=user_id,
+            input_type=input_type,
+            image_filename=image_filename,
+            original_text=original_text,
+            extracted_text=extracted_text,
+            cleaned_text=cleaned_text,
+            prediction=prediction,
+            confidence=confidence,
+            model_name=model_name,
+        )
         connection.commit()
-        return cursor.lastrowid
+        return {
+            "history_id": history_id,
+            "classification_result_id": classification_result_id,
+        }
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         cursor.close()
         connection.close()
@@ -359,33 +496,18 @@ def save_image_prediction_records(
     connection = get_db_connection()
     try:
         cursor = connection.cursor()
-        cursor.execute(
-            """
-            INSERT INTO uploaded_images (user_id, image_name, image_path)
-            VALUES (%s, %s, %s)
-            """,
-            (user_id, image_name, image_path),
+        classification_result_id = _insert_classification_result(
+            cursor=cursor,
+            user_id=user_id,
+            input_type="image",
+            image_filename=image_name,
+            image_path=image_path,
+            extracted_text=extracted_text,
+            cleaned_text=cleaned_text,
+            prediction=prediction,
+            confidence=confidence,
+            model_name=model_name,
         )
-        image_id = cursor.lastrowid
-
-        cursor.execute(
-            """
-            INSERT INTO classification_results (
-                user_id, image_id, extracted_text, cleaned_text,
-                prediction_label, confidence_score
-            )
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                user_id,
-                image_id,
-                extracted_text,
-                cleaned_text,
-                prediction,
-                confidence,
-            ),
-        )
-        classification_result_id = cursor.lastrowid
 
         cursor.execute(
             """
@@ -409,7 +531,7 @@ def save_image_prediction_records(
 
         connection.commit()
         return {
-            "image_id": image_id,
+            "image_id": None,
             "classification_result_id": classification_result_id,
             "history_id": history_id,
         }

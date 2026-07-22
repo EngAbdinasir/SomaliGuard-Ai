@@ -10,6 +10,8 @@ from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import easyocr
 
+from language_detection import detect_somali_language
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 MODEL_DIR = BASE_DIR / "models"
 
@@ -47,10 +49,6 @@ if stopwords_path:
                 for line in f
                 if line.strip()
             }
-
-OFFENSIVE_LEXICON_PATH = MODEL_DIR / "offensive_lexicon.txt"
-OFFENSIVE_LEXICON = set()
-
 
 def model_files_exist(model_path):
     return model_path.exists() and any(
@@ -110,29 +108,6 @@ def clean_somali_text(text):
     return text
 
 
-if OFFENSIVE_LEXICON_PATH.exists():
-    with open(OFFENSIVE_LEXICON_PATH, "r", encoding="utf-8") as f:
-        OFFENSIVE_LEXICON = {
-            clean_somali_text(line)
-            for line in f
-            if line.strip() and not line.strip().startswith("#")
-        }
-        OFFENSIVE_LEXICON.discard("")
-
-
-def contains_offensive_lexicon_match(text):
-    cleaned = clean_somali_text(text)
-    if not cleaned or not OFFENSIVE_LEXICON:
-        return False, []
-
-    matches = []
-    for term in OFFENSIVE_LEXICON:
-        if re.search(rf"(?<![a-z]){re.escape(term)}(?![a-z])", cleaned):
-            matches.append(term)
-
-    return bool(matches), sorted(matches)
-
-
 def remove_stopwords(text):
     if not STOPWORDS:
         return text
@@ -149,15 +124,6 @@ def preprocess_somali_text(text):
         return remove_stopwords(cleaned)
 
     return cleaned
-
-
-MAX_IMAGE_OCR_WORDS = 90
-MAX_IMAGE_OCR_CHARS = 900
-
-
-def ocr_text_is_too_large(cleaned_text):
-    words = re.findall(r"[a-z]+", cleaned_text or "")
-    return len(words) > MAX_IMAGE_OCR_WORDS or len(cleaned_text or "") > MAX_IMAGE_OCR_CHARS
 
 
 def extract_text_from_image(image_path, min_confidence=0.30):
@@ -179,7 +145,6 @@ def extract_text_from_image(image_path, min_confidence=0.30):
 
 def predict_text(text):
     cleaned = preprocess_somali_text(text)
-    lexicon_matched, lexicon_matches = contains_offensive_lexicon_match(text)
 
     if not cleaned:
         return {
@@ -188,6 +153,18 @@ def predict_text(text):
             "prediction": "unknown",
             "confidence": 0.0,
             "model_name": BEST_INFO.get("best_model_name", "SomBERTa")
+        }
+
+    language_result = detect_somali_language(cleaned)
+    if not language_result["is_somali"]:
+        return {
+            "original_text": text,
+            "cleaned_text": cleaned,
+            "prediction": "no_somali_text_detected",
+            "confidence": 0.0,
+            "model_name": BEST_INFO.get("best_model_name", "SomBERTa"),
+            "detected_language": language_result["language"],
+            "language_confidence": language_result["confidence"],
         }
 
     inputs = tokenizer(
@@ -207,14 +184,6 @@ def predict_text(text):
     pred_id = int(torch.argmax(probabilities, dim=1).item())
     confidence = float(probabilities[0][pred_id].item())
     prediction = LABEL_MAPPING[pred_id]
-    detection_source = "model"
-
-    if lexicon_matched and prediction == "non-offensive":
-        prediction = "offensive"
-        confidence = max(confidence, 0.99)
-        detection_source = "model+lexicon"
-    elif lexicon_matched:
-        detection_source = "model+lexicon"
 
     return {
         "original_text": text,
@@ -222,8 +191,9 @@ def predict_text(text):
         "prediction": prediction,
         "confidence": round(confidence, 4),
         "model_name": BEST_INFO.get("best_model_name", "SomBERTa"),
-        "detection_source": detection_source,
-        "lexicon_matches": lexicon_matches,
+        "detection_source": "model",
+        "detected_language": "so",
+        "language_confidence": language_result["confidence"],
     }
 
 
@@ -231,27 +201,31 @@ def predict_image(image_path):
     extracted_text = extract_text_from_image(image_path)
     cleaned_text = clean_somali_text(extracted_text)
 
-    if not extracted_text:
+    # OCR may return punctuation, digits, or symbols even when no classifiable
+    # language is present. Stop before tokenization unless usable text remains.
+    if not cleaned_text:
         return {
             "image_path": str(image_path),
-            "extracted_text": "",
+            "extracted_text": extracted_text,
             "cleaned_text": "",
             "prediction": "no_text_detected",
             "confidence": 0.0,
             "model_name": BEST_INFO.get("best_model_name", "SomBERTa")
         }
 
-    if ocr_text_is_too_large(cleaned_text):
+    prediction = predict_text(extracted_text)
+
+    if prediction["prediction"] == "no_somali_text_detected":
         return {
             "image_path": str(image_path),
             "extracted_text": extracted_text,
             "cleaned_text": cleaned_text,
-            "prediction": "too_much_text_detected",
+            "prediction": "no_somali_text_detected",
             "confidence": 0.0,
-            "model_name": BEST_INFO.get("best_model_name", "SomBERTa")
+            "model_name": prediction["model_name"],
+            "detected_language": prediction.get("detected_language", "unknown"),
+            "language_confidence": prediction.get("language_confidence", 0.0),
         }
-
-    prediction = predict_text(extracted_text)
 
     return {
         "image_path": str(image_path),
@@ -259,5 +233,7 @@ def predict_image(image_path):
         "cleaned_text": prediction["cleaned_text"],
         "prediction": prediction["prediction"],
         "confidence": prediction["confidence"],
-        "model_name": prediction["model_name"]
+        "model_name": prediction["model_name"],
+        "detected_language": prediction.get("detected_language", "so"),
+        "language_confidence": prediction.get("language_confidence", 0.0),
     }

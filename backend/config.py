@@ -34,6 +34,10 @@ class Config:
 
     PASSWORD_RESET_EXPIRES_MINUTES = int(os.getenv("PASSWORD_RESET_EXPIRES_MINUTES", "15"))
     EMAIL_VERIFICATION_EXPIRES_MINUTES = int(os.getenv("EMAIL_VERIFICATION_EXPIRES_MINUTES", "10"))
+    LOCAL_EMAIL_VERIFICATION = os.getenv(
+        "LOCAL_EMAIL_VERIFICATION",
+        "false" if APP_ENV in {"production", "prod"} else "true",
+    ).lower() in {"1", "true", "yes", "on"}
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
     CORS_ORIGINS = list(
         dict.fromkeys(
@@ -45,7 +49,6 @@ class Config:
             if origin.strip()
         )
     )
-    MODEL_REVIEW_CONFIDENCE_THRESHOLD = float(os.getenv("MODEL_REVIEW_CONFIDENCE_THRESHOLD", "0.65"))
     FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
     FLASK_PORT = int(os.getenv("FLASK_PORT", os.getenv("PORT", "5000")))
 

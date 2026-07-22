@@ -29,6 +29,7 @@ from database import (
     create_email_verification_code,
     create_user,
     deactivate_user,
+    ensure_classification_results_table,
     ensure_database_indexes,
     ensure_email_verification_table,
     ensure_user_profile_picture_column,
@@ -50,11 +51,11 @@ from database import (
 )
 from inference import (
     extract_text_from_image,
-    ocr_text_is_too_large,
     predict_image,
     predict_text,
     preprocess_somali_text,
 )
+from language_detection import detect_somali_language
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = Config.MAX_CONTENT_LENGTH
@@ -65,8 +66,27 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 PROFILE_PICTURE_DIR = UPLOAD_DIR / "profile_pictures"
 PROFILE_PICTURE_DIR.mkdir(parents=True, exist_ok=True)
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+SOMALI_LATIN_LETTER_PATTERN = re.compile(r"[A-Za-z]")
+TEXT_CONTENT_ERROR = (
+    "Enter Somali text containing at least one letter. Numbers, symbols, and emojis "
+    "are allowed only when included with text."
+)
+NO_IMAGE_TEXT_ERROR = (
+    "No readable Somali text was detected in this image. Upload a clearer image "
+    "that contains text before running prediction."
+)
+SOMALI_LANGUAGE_ERROR = (
+    "Please enter Somali language text only. The submitted content was not "
+    "recognized as Somali."
+)
 RESET_GENERIC_MESSAGE = "If this email exists, we sent a password reset link."
-REVIEW_EXEMPT_PREDICTIONS = {"unknown", "no_text_detected", "too_much_text_detected", "no_somali_text_detected", "needs_review"}
+PLACEHOLDER_ENV_VALUES = {
+    "",
+    "your_email@gmail.com",
+    "your_gmail_app_password",
+    "your_verified_brevo_sender@example.com",
+    "your-google-oauth-client-id.apps.googleusercontent.com",
+}
 app.config["RATELIMIT_STORAGE_URI"] = Config.RATELIMIT_STORAGE_URI
 app.config["RATELIMIT_ENABLED"] = Config.RATELIMIT_ENABLED
 limiter = Limiter(
@@ -79,6 +99,7 @@ limiter = Limiter(
 try:
     ensure_user_profile_picture_column()
     ensure_email_verification_table()
+    ensure_classification_results_table()
     ensure_database_indexes()
 except Exception as exc:
     print(f"Warning: could not verify database migrations: {exc}")
@@ -90,6 +111,24 @@ def allowed_file(filename):
 
 def is_valid_email(email):
     return bool(EMAIL_PATTERN.match(email or ""))
+
+
+def validate_prediction_text(text):
+    if not isinstance(text, str):
+        return "Text must be provided as a string."
+    if not text.strip():
+        return "Please enter Somali text before running analysis."
+    if not SOMALI_LATIN_LETTER_PATTERN.search(text):
+        return TEXT_CONTENT_ERROR
+    return None
+
+
+def validate_somali_language(text):
+    cleaned_text = preprocess_somali_text(text)
+    language_result = detect_somali_language(cleaned_text)
+    if not language_result["is_somali"]:
+        return SOMALI_LANGUAGE_ERROR, language_result
+    return None, language_result
 
 
 def validate_image_upload(file):
@@ -153,23 +192,10 @@ def normalize_result_for_history(result):
     }
 
 
-def apply_review_threshold(result):
-    prediction = str(result.get("prediction") or "").lower()
-    confidence = float(result.get("confidence") or 0)
-
-    if prediction not in REVIEW_EXEMPT_PREDICTIONS and confidence < Config.MODEL_REVIEW_CONFIDENCE_THRESHOLD:
-        result["original_prediction"] = result.get("prediction")
-        result["prediction"] = "needs_review"
-        result["review_reason"] = "low_confidence"
-        result["review_threshold"] = Config.MODEL_REVIEW_CONFIDENCE_THRESHOLD
-
-    return result
-
-
 def attach_history(result, user, input_type, **kwargs):
     try:
         history_data = normalize_result_for_history(result)
-        history_id = save_prediction(
+        record_ids = save_prediction(
             user_id=user["id"] if user else None,
             input_type=input_type,
             cleaned_text=history_data["cleaned_text"],
@@ -178,7 +204,11 @@ def attach_history(result, user, input_type, **kwargs):
             model_name=history_data["model_name"],
             **kwargs,
         )
-        result["history_id"] = history_id
+        if isinstance(record_ids, dict):
+            result.update(record_ids)
+        else:
+            result["history_id"] = record_ids
+            result["classification_result_id"] = None
     except Exception as exc:
         result["history_id"] = None
         result["history_warning"] = f"Prediction completed, but history was not saved: {exc}"
@@ -341,6 +371,19 @@ def send_email(to_email, subject, content, reply_to=None):
         server.send_message(email_message)
 
 
+def is_real_value(value):
+    return (value or "").strip() not in PLACEHOLDER_ENV_VALUES
+
+
+def has_email_delivery_config():
+    if is_real_value(Config.BREVO_API_KEY):
+        return True
+    return all(
+        is_real_value(value)
+        for value in (Config.SMTP_HOST, Config.SMTP_USER, Config.SMTP_PASSWORD)
+    )
+
+
 def send_contact_email(name, sender_email, subject, message):
     send_email(
         Config.CONTACT_TO_EMAIL,
@@ -389,6 +432,32 @@ def send_email_verification_code(user_email, verification_code):
             f"This code expires in {Config.EMAIL_VERIFICATION_EXPIRES_MINUTES} minutes.",
             "If you did not request this code, you can ignore this email.",
         ]),
+    )
+
+
+def email_delivery_error_message(action):
+    if Config.IS_PRODUCTION:
+        return f"{action} could not be sent right now. Please try again later."
+    return f"{action} could not be emailed because mail delivery is not configured correctly."
+
+
+def local_verification_code_response(email, verification_code, reason=None):
+    print(f"Local email verification code for {email}: {verification_code}")
+    message = (
+        "Local verification mode is active. Use the code shown in the signup form "
+        "to finish creating the account."
+    )
+    if reason == "delivery_failed":
+        message = (
+            "Email delivery failed locally, so local verification mode is showing "
+            "the code in the signup form."
+        )
+    return jsonify(
+        {
+            "message": message,
+            "dev_verification_code": verification_code,
+            "email_delivery_mode": "local",
+        }
     )
 
 
@@ -448,14 +517,29 @@ def send_verification_code():
 
     try:
         if find_user_by_email(email):
-            return jsonify({"error": "This email is taken."}), 409
+            return jsonify({"error": "This email is already registered. Please log in instead."}), 409
 
         verification_code = f"{randbelow(1000000):06d}"
         create_email_verification_code(email, verification_code)
-        send_email_verification_code(email, verification_code)
-        return jsonify({"message": "We sent a verification code. Check your Inbox and Spam folder."})
+
+        if not has_email_delivery_config():
+            if Config.LOCAL_EMAIL_VERIFICATION:
+                return local_verification_code_response(email, verification_code)
+            return jsonify({
+                "error": "Email verification is not configured. Add Brevo or SMTP settings in backend/.env, then restart the backend."
+            }), 503
+
+        try:
+            send_email_verification_code(email, verification_code)
+            return jsonify({"message": "We sent a verification code. Check your Inbox and Spam folder."})
+        except Exception as exc:
+            print(f"Email verification delivery failed for {email}: {exc}")
+            if Config.LOCAL_EMAIL_VERIFICATION:
+                return local_verification_code_response(email, verification_code, reason="delivery_failed")
+            return jsonify({"error": email_delivery_error_message("Verification code")}), 503
     except Exception as exc:
-        return jsonify({"error": f"Verification code could not be sent: {exc}"}), 500
+        print(f"Verification code request failed for {email}: {exc}")
+        return jsonify({"error": "Verification code could not be created right now. Please try again."}), 500
 
 
 @app.route("/register", methods=["POST"])
@@ -545,7 +629,11 @@ def google_auth():
     try:
         from google.auth.transport import requests as google_requests
         from google.oauth2 import id_token
+    except ImportError as exc:
+        print(f"Google sign-in dependency missing: {exc}")
+        return jsonify({"error": "Google sign-in is not ready on the server. Please install backend dependencies and restart the API."}), 503
 
+    try:
         google_user = id_token.verify_oauth2_token(
             credential,
             google_requests.Request(),
@@ -574,7 +662,8 @@ def google_auth():
     except ValueError:
         return jsonify({"error": "Invalid Google credential."}), 401
     except Exception as exc:
-        return jsonify({"error": f"Google sign-in failed: {exc}"}), 500
+        print(f"Google sign-in failed: {exc}")
+        return jsonify({"error": "Google sign-in failed. Please try again or use email and password."}), 500
 
 
 @app.route("/forgot-password", methods=["POST"])
@@ -596,9 +685,7 @@ def forgot_password():
         reset_token = token_urlsafe(32)
         create_password_reset_token(user["id"], reset_token)
 
-        if Config.BREVO_API_KEY or (
-            Config.SMTP_HOST and Config.SMTP_USER and Config.SMTP_PASSWORD
-        ):
+        if has_email_delivery_config():
             send_password_reset_email(user["email"], reset_token)
         elif Config.IS_PRODUCTION:
             raise RuntimeError("Password reset email is not configured.")
@@ -829,12 +916,22 @@ def deactivate_user_route(user_id):
 def preprocess_text_route():
     data = request.get_json(silent=True) or {}
 
-    if not data or "text" not in data:
+    if not isinstance(data, dict) or "text" not in data:
         return jsonify({"error": "Please provide a text field."}), 400
 
     text = data.get("text", "")
-    if not text.strip():
-        return jsonify({"error": "Please enter Somali text before preprocessing."}), 400
+    validation_error = validate_prediction_text(text)
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
+
+    language_error, language_result = validate_somali_language(text)
+    if language_error:
+        return jsonify({
+            "error": language_error,
+            "code": "SOMALI_LANGUAGE_REQUIRED",
+            "detected_language": language_result["language"],
+            "language_confidence": language_result["confidence"],
+        }), 422
 
     try:
         cleaned_text = preprocess_somali_text(text)
@@ -843,6 +940,8 @@ def preprocess_text_route():
             "cleaned_text": cleaned_text,
             "original_stats": text_stats(text),
             "cleaned_stats": text_stats(cleaned_text),
+            "detected_language": "so",
+            "language_confidence": language_result["confidence"],
         })
     except Exception as exc:
         return jsonify({"error": f"Text preprocessing failed: {exc}"}), 500
@@ -854,12 +953,27 @@ def preprocess_text_route():
 def predict_text_route():
     data = request.get_json(silent=True) or {}
 
-    if not data or "text" not in data:
+    if not isinstance(data, dict) or "text" not in data:
         return jsonify({"error": "Please provide a text field."}), 400
 
+    text = data.get("text", "")
+    validation_error = validate_prediction_text(text)
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
+
+    language_error, language_result = validate_somali_language(text)
+    if language_error:
+        return jsonify({
+            "error": language_error,
+            "code": "SOMALI_LANGUAGE_REQUIRED",
+            "detected_language": language_result["language"],
+            "language_confidence": language_result["confidence"],
+        }), 422
+
     try:
-        text = data.get("text", "")
-        result = apply_review_threshold(predict_text(text))
+        result = predict_text(text)
+        result["detected_language"] = "so"
+        result["language_confidence"] = language_result["confidence"]
         user = request.current_user
         result = attach_history(
             result,
@@ -900,14 +1014,42 @@ def extract_image_text_route():
         file.save(image_path)
         extracted_text = extract_text_from_image(image_path)
         cleaned_text = preprocess_somali_text(extracted_text)
-        too_much_text = ocr_text_is_too_large(cleaned_text)
+
+        if not cleaned_text:
+            return jsonify({
+                "error": NO_IMAGE_TEXT_ERROR,
+                "image_filename": original_filename,
+                "extracted_text": extracted_text,
+                "cleaned_text": "",
+                "original_stats": text_stats(extracted_text),
+                "cleaned_stats": text_stats(""),
+                "status": "no_text_detected",
+            }), 422
+
+        language_result = detect_somali_language(cleaned_text)
+        if not language_result["is_somali"]:
+            return jsonify({
+                "error": SOMALI_LANGUAGE_ERROR,
+                "code": "SOMALI_LANGUAGE_REQUIRED",
+                "image_filename": original_filename,
+                "extracted_text": extracted_text,
+                "cleaned_text": cleaned_text,
+                "original_stats": text_stats(extracted_text),
+                "cleaned_stats": text_stats(cleaned_text),
+                "status": "no_somali_text_detected",
+                "detected_language": language_result["language"],
+                "language_confidence": language_result["confidence"],
+            }), 422
+
         return jsonify({
             "image_filename": original_filename,
             "extracted_text": extracted_text,
             "cleaned_text": cleaned_text,
             "original_stats": text_stats(extracted_text),
             "cleaned_stats": text_stats(cleaned_text),
-            "status": "too_much_text_detected" if too_much_text else "ready" if extracted_text else "no_text_detected",
+            "status": "ready",
+            "detected_language": "so",
+            "language_confidence": language_result["confidence"],
         })
     except Exception as exc:
         return jsonify({"error": f"Image text extraction failed: {exc}"}), 500
@@ -939,13 +1081,33 @@ def predict_image_route():
         return jsonify({"error": str(exc)}), 400
 
     original_filename = secure_filename(file.filename)
-    extension = original_filename.rsplit(".", 1)[1].lower()
     filename = f"{uuid4().hex}_{original_filename}"
     image_path = UPLOAD_DIR / filename
 
     try:
         file.save(image_path)
-        result = apply_review_threshold(predict_image(image_path))
+        result = predict_image(image_path)
+
+        if result.get("prediction") in {"no_text_detected", "no_somali_text_detected"}:
+            try:
+                image_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            error_message = (
+                NO_IMAGE_TEXT_ERROR
+                if result.get("prediction") == "no_text_detected"
+                else SOMALI_LANGUAGE_ERROR
+            )
+            return jsonify({
+                **result,
+                "error": error_message,
+                "code": (
+                    "IMAGE_TEXT_REQUIRED"
+                    if result.get("prediction") == "no_text_detected"
+                    else "SOMALI_LANGUAGE_REQUIRED"
+                ),
+            }), 422
+
         user = request.current_user
         result = attach_image_records(
             result,

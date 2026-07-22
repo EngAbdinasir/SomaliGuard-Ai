@@ -17,4 +17,6 @@ bcrypt
 PyJWT
 python-dotenv
 google-auth
+requests
 pytest
+lingua-language-detector==2.2.0

@@ -47,29 +47,21 @@ CREATE TABLE IF NOT EXISTS prediction_history (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
-CREATE TABLE IF NOT EXISTS uploaded_images (
-  image_id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NOT NULL,
-  image_name VARCHAR(255) NOT NULL,
-  image_path VARCHAR(255) NOT NULL,
-  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_uploaded_images_user
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS classification_results (
   result_id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NOT NULL,
-  image_id INT NOT NULL,
+  user_id INT NULL,
+  input_type VARCHAR(20) NOT NULL,
+  image_filename VARCHAR(255),
+  image_path VARCHAR(255),
+  original_text TEXT,
   extracted_text TEXT,
   cleaned_text TEXT,
   prediction_label VARCHAR(50) NOT NULL,
   confidence_score FLOAT,
+  model_name VARCHAR(100),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_classification_results_user
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_classification_results_image
-    FOREIGN KEY (image_id) REFERENCES uploaded_images(image_id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE INDEX idx_prediction_history_user_created
@@ -83,3 +75,9 @@ CREATE INDEX idx_users_role_active
 
 CREATE INDEX idx_email_verification_email_used_expires
   ON email_verification_codes(email, used, expires_at);
+
+CREATE INDEX idx_classification_results_user_created
+  ON classification_results(user_id, created_at);
+
+CREATE INDEX idx_classification_results_input_created
+  ON classification_results(input_type, created_at);
