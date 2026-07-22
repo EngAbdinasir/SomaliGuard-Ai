@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Camera, IdCard, Lock, MailCheck, ScanSearch, ShieldCheck, UserPlus } from 'lucide-react';
+import { ArrowRight, Camera, IdCard, Lock, MailCheck, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import {
+  AuthCardTopline,
   AuthDivider,
   AuthField,
   AuthInput,
@@ -10,6 +11,7 @@ import {
   AuthPasswordInput,
   AuthPrimaryButton,
   AuthSwitchLink,
+  AuthVisualPanel,
 } from '../components/AuthUI';
 import { useAuth } from '../context/AuthContext';
 import { sendVerificationCode } from '../services/api';
@@ -31,6 +33,8 @@ const Register = () => {
   const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedName = name.trim();
 
   useEffect(() => {
     return () => {
@@ -56,9 +60,10 @@ const Register = () => {
   };
 
   const validateSignupDetails = () => {
-    if (!name.trim() || !email.trim() || !password) {
+    if (!normalizedName || !normalizedEmail || !password) {
       return 'Please fill in all fields.';
     }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return 'Please enter a valid email address.';
 
     if (password.length < 8) return 'Password must be at least 8 characters.';
     if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.';
@@ -71,6 +76,7 @@ const Register = () => {
   const handleSendCode = async () => {
     setError('');
     setVerificationMessage('');
+    if (sendingCode || submitting) return;
 
     const validationError = validateSignupDetails();
     if (validationError) {
@@ -80,8 +86,16 @@ const Register = () => {
 
     setSendingCode(true);
     try {
-      const data = await sendVerificationCode(email);
-      setVerificationMessage(data.message);
+      const data = await sendVerificationCode(normalizedEmail);
+      if (data.dev_verification_code) {
+        setVerificationCode(data.dev_verification_code);
+      }
+
+      const localCodeText = data.dev_verification_code
+        ? ` Local verification code: ${data.dev_verification_code}`
+        : '';
+
+      setVerificationMessage(`${data.message || 'Verification code created.'}${localCodeText}`);
       setAwaitingVerification(true);
     } catch (err) {
       setError(err.message);
@@ -100,6 +114,7 @@ const Register = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+    if (submitting || sendingCode) return;
 
     const validationError = validateSignupDetails();
     if (validationError) {
@@ -118,7 +133,7 @@ const Register = () => {
     }
 
     setSubmitting(true);
-    const result = await register(name, email, password, profilePicture, verificationCode);
+    const result = await register(normalizedName, normalizedEmail, password, profilePicture, verificationCode);
     setSubmitting(false);
 
     if (result.success) {
@@ -129,6 +144,7 @@ const Register = () => {
   };
 
   const handleGoogleCredential = async (credential) => {
+    if (googleSubmitting) return;
     setGoogleSubmitting(true);
     setError('');
     const result = await loginWithGoogle(credential);
@@ -144,42 +160,38 @@ const Register = () => {
   return (
     <main className="login-redesign-page signup-redesign-page">
       <section className="login-redesign-shell signup-redesign-shell">
-        <aside className="login-redesign-panel signup-redesign-panel">
-          <div className="login-redesign-brand">
-              <span>🧠</span>
-              <div>
-                <strong>SomaliGuard AI</strong>
-              <small>Research workspace</small>
-              </div>
-            </div>
-
-            <div className="login-redesign-copy">
-            <span className="login-redesign-kicker"><UserPlus size={15} /> Verified account</span>
-            <h1>Create a secure academic analysis account.</h1>
-            <p>Fill in your details first. The system sends a one-time email code before creating your account.</p>
-          </div>
-
-          <div className="login-redesign-signals">
-            <div>
-              <MailCheck size={20} />
-              <span>Email verified</span>
-            </div>
-            <div>
-              <ShieldCheck size={20} />
-              <span>Protected login</span>
-            </div>
-            <div>
-              <ScanSearch size={20} />
-              <span>Research history</span>
-            </div>
-          </div>
-        </aside>
+        <AuthVisualPanel
+          className="signup-redesign-panel"
+          subtitle="Academic research workspace"
+          kickerIcon={<Sparkles size={15} />}
+          kicker="Create your workspace"
+          title="One verified account for every analysis."
+          description="Create your profile, confirm your email address, and keep text and image results connected to your research history."
+          signals={[
+            { icon: <MailCheck size={20} />, label: 'Email verified' },
+            { icon: <ShieldCheck size={20} />, label: 'Protected access' },
+            { icon: <ScanSearch size={20} />, label: 'Saved history' },
+          ]}
+        />
 
         <section className="login-redesign-card signup-redesign-card">
+          <AuthCardTopline status={awaitingVerification ? 'Step 2 of 2' : 'Step 1 of 2'} />
           <div className="login-redesign-card-header signup-redesign-card-header">
             <span className="login-redesign-lock"><IdCard size={22} /></span>
             <h2>Create an account</h2>
             <p>We will verify your email before creating the account.</p>
+          </div>
+
+          <div className="signup-progress" aria-label={`Registration step ${awaitingVerification ? 2 : 1} of 2`}>
+            <div className="active">
+              <span>{awaitingVerification ? '✓' : '1'}</span>
+              <strong>Account details</strong>
+            </div>
+            <i className={awaitingVerification ? 'active' : ''} />
+            <div className={awaitingVerification ? 'active' : ''}>
+              <span>2</span>
+              <strong>Email verification</strong>
+            </div>
           </div>
 
           <AuthNotice text={error} />
@@ -252,7 +264,7 @@ const Register = () => {
               <div className="verification-panel signup-verification-panel">
                 <div>
                   <h3>Verify your email</h3>
-                  <p>Enter the 6-digit code sent to {email}. If it does not arrive, check Spam, resend the code, or change the email.</p>
+                  <p>Enter the 6-digit code sent to {normalizedEmail}. If it does not arrive, check Spam, resend the code, or change the email.</p>
                 </div>
                 <AuthField label="Verification code">
                   <AuthInput

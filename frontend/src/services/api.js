@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001';
 const TOKEN_KEY = 'somaliguard_token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
@@ -30,7 +30,7 @@ const request = async (...args) => {
   try {
     return await fetch(...args);
   } catch (error) {
-    throw new Error('Cannot connect to the server. Please make sure the backend is running.');
+    throw new Error('Cannot connect to the server. Please make sure the backend is running.', { cause: error });
   }
 };
 
@@ -46,17 +46,27 @@ const postJson = async (path, payload, includeAuth = false) => {
   return parseResponse(response);
 };
 
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+
 export const sendVerificationCode = (email) =>
-  postJson('/send-verification-code', { email });
+  postJson('/send-verification-code', { email: normalizeEmail(email) });
 
 export const registerUser = async (fullName, email, password, profilePicture, verificationCode) => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedName = String(fullName || '').trim();
+
   if (!profilePicture) {
-    return postJson('/register', { full_name: fullName, email, password, verification_code: verificationCode });
+    return postJson('/register', {
+      full_name: normalizedName,
+      email: normalizedEmail,
+      password,
+      verification_code: verificationCode,
+    });
   }
 
   const formData = new FormData();
-  formData.append('full_name', fullName);
-  formData.append('email', email);
+  formData.append('full_name', normalizedName);
+  formData.append('email', normalizedEmail);
   formData.append('password', password);
   formData.append('verification_code', verificationCode);
   formData.append('profile_picture', profilePicture);
@@ -69,16 +79,20 @@ export const registerUser = async (fullName, email, password, profilePicture, ve
 };
 
 export const loginUser = (email, password) =>
-  postJson('/login', { email, password });
+  postJson('/login', { email: normalizeEmail(email), password });
 
 export const loginWithGoogleCredential = (credential) =>
   postJson('/auth/google', { credential });
 
 export const forgotPassword = (email) =>
-  postJson('/forgot-password', { email });
+  postJson('/forgot-password', { email: normalizeEmail(email) });
 
 export const resetPassword = (token, newPassword, confirmPassword) =>
-  postJson('/reset-password', { token, new_password: newPassword, confirm_password: confirmPassword });
+  postJson('/reset-password', {
+    token: String(token || '').trim(),
+    new_password: newPassword,
+    confirm_password: confirmPassword,
+  });
 
 export const sendContactMessage = (payload) =>
   postJson('/contact', payload);

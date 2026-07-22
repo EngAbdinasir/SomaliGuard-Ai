@@ -7,17 +7,16 @@ export const isNonOffensivePrediction = (prediction) => {
   return String(prediction || '').toLowerCase().includes('non');
 };
 
-export const isReviewPrediction = (prediction) => {
-  return ['no_text_detected', 'too_much_text_detected', 'no_somali_text_detected', 'unknown', 'needs_review']
+export const isUnclassifiedPrediction = (prediction) => {
+  return ['no_text_detected', 'no_somali_text_detected', 'unknown']
     .includes(String(prediction || '').toLowerCase());
 };
 
 export const formatPredictionLabel = (prediction) => {
   const value = String(prediction || '').toLowerCase();
   if (value === 'no_text_detected') return 'NO TEXT';
-  if (value === 'too_much_text_detected') return 'TOO MUCH TEXT';
   if (value === 'no_somali_text_detected') return 'NO SOMALI TEXT';
-  if (value === 'unknown' || value === 'needs_review') return 'NEEDS REVIEW';
+  if (value === 'unknown') return 'UNCLASSIFIED';
   if (isOffensivePrediction(prediction)) return 'OFFENSIVE';
   if (isNonOffensivePrediction(prediction)) return 'NON-OFFENSIVE';
   return String(prediction || 'UNKNOWN').toUpperCase();
@@ -36,7 +35,8 @@ export const buildHistoryStats = (history = []) => {
   const total = history.length;
   const offensive = history.filter((row) => isOffensivePrediction(row.prediction)).length;
   const nonOffensive = history.filter((row) => isNonOffensivePrediction(row.prediction)).length;
-  const needsReview = history.filter((row) => isReviewPrediction(row.prediction)).length;
+  const unclassified = history.filter((row) => isUnclassifiedPrediction(row.prediction)).length;
+  const classified = offensive + nonOffensive;
   const image = history.filter((row) => row.input_type === 'image').length;
   const text = history.filter((row) => row.input_type === 'text').length;
 
@@ -44,10 +44,11 @@ export const buildHistoryStats = (history = []) => {
     total,
     offensive,
     nonOffensive,
-    needsReview,
+    unclassified,
+    classified,
     image,
     text,
-    offensivePercent: total ? Math.round((offensive / total) * 100) : 0,
-    nonOffensivePercent: total ? Math.round((nonOffensive / total) * 100) : 0,
+    offensivePercent: classified ? Math.round((offensive / classified) * 100) : 0,
+    nonOffensivePercent: classified ? Math.round((nonOffensive / classified) * 100) : 0,
   };
 };

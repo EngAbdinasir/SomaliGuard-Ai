@@ -1,35 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Bar, Doughnut } from 'react-chartjs-2';
-import {
-  BarElement,
-  CategoryScale,
-  Chart as ChartJS,
-  ArcElement,
-  Legend,
-  LinearScale,
-  Tooltip,
-} from 'chart.js';
-import {
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  FileImage,
-  FileText,
-  RefreshCw,
-  Search,
-  ShieldAlert,
-  Sparkles,
-} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Doughnut } from 'react-chartjs-2';
+import { ArcElement, Chart as ChartJS, Legend, Tooltip } from 'chart.js';
+import { Copy, Download, Eye, FileImage, FileText, RefreshCw, Search, X } from 'lucide-react';
 import { getHistory } from '../services/api';
+import { Alert, Card, EmptyState, LoadingState, PageHeader } from '../components/ui/Primitives';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
+ChartJS.register(ArcElement, Tooltip, Legend);
+const PAGE_SIZE = 10;
 
 const History = () => {
   const [history, setHistory] = useState([]);
-  const [filter, setFilter] = useState('all');
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [classification, setClassification] = useState('all');
+  const [inputType, setInputType] = useState('all');
+  const [date, setDate] = useState('');
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState(null);
+  const [reportType, setReportType] = useState('all');
+  const [reportMessage, setReportMessage] = useState('');
 
   const loadHistory = async () => {
     setLoading(true);
@@ -37,409 +27,186 @@ const History = () => {
     try {
       const data = await getHistory();
       setHistory(data.history || []);
-    } catch (err) {
-      setError(err.message);
+    } catch (requestError) {
+      setError(requestError.message);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadHistory();
+    let active = true;
+    getHistory()
+      .then((data) => { if (active) setHistory(data.history || []); })
+      .catch((requestError) => { if (active) setError(requestError.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
 
-  const stats = useMemo(() => {
-    const offensive = history.filter((row) => isOffensive(row.prediction)).length;
-    const safe = history.filter((row) => isSafe(row.prediction)).length;
-    const image = history.filter((row) => row.input_type === 'image').length;
-    const text = history.filter((row) => row.input_type === 'text').length;
-    return {
-      total: history.length,
-      offensive,
-      safe,
-      image,
-      text,
-    };
-  }, [history]);
+  const stats = useMemo(() => ({
+    total: history.length,
+    offensive: history.filter((row) => isOffensive(row.prediction)).length,
+    safe: history.filter((row) => isSafe(row.prediction)).length,
+    text: history.filter((row) => row.input_type === 'text').length,
+    image: history.filter((row) => row.input_type === 'image').length,
+  }), [history]);
 
-  const filteredData = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return history.filter((row) => {
-      const prediction = String(row.prediction || '').toLowerCase();
-      const haystack = [
-        row.original_text,
-        row.extracted_text,
-        row.cleaned_text,
-        row.input_type,
-        row.created_at,
-      ].join(' ').toLowerCase();
+  const filtered = useMemo(() => history.filter((row) => {
+    const content = [row.original_text, row.extracted_text, row.cleaned_text, row.model_name].join(' ').toLowerCase();
+    const matchesSearch = !search.trim() || content.includes(search.trim().toLowerCase());
+    const matchesClass = classification === 'all'
+      || (classification === 'offensive' && isOffensive(row.prediction))
+      || (classification === 'safe' && isSafe(row.prediction));
+    const matchesType = inputType === 'all' || row.input_type === inputType;
+    const matchesDate = !date || toDateKey(row.created_at) === date;
+    return matchesSearch && matchesClass && matchesType && matchesDate;
+  }), [history, search, classification, inputType, date]);
 
-      const matchesFilter =
-        filter === 'all' ||
-        (filter === 'offensive' && isOffensive(prediction)) ||
-        (filter === 'safe' && isSafe(prediction)) ||
-        row.input_type === filter;
-      const matchesSearch = !query || haystack.includes(query);
-      return matchesFilter && matchesSearch;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const visibleRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const downloadReport = () => {
+    const rows = history.filter((row) => {
+      if (reportType === 'text' || reportType === 'image') return row.input_type === reportType;
+      if (reportType === 'offensive') return isOffensive(row.prediction);
+      if (reportType === 'safe') return isSafe(row.prediction);
+      return true;
     });
-  }, [history, filter, search]);
+    if (!rows.length) {
+      setReportMessage('No saved records match that report type.');
+      return;
+    }
+    const values = [
+      ['Record ID', 'Input Type', 'Prediction', 'Model Confidence', 'Original Text', 'Extracted Text', 'Cleaned Text', 'Model', 'Created At'],
+      ...rows.map((row) => [row.id, row.input_type, label(row.prediction), confidence(row.confidence), row.original_text || '', row.extracted_text || '', row.cleaned_text || '', row.model_name || '', formatDate(row.created_at)]),
+    ];
+    const csv = values.map((row) => row.map(csvCell).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `somaliguard-${reportType}-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setReportMessage(`${rows.length} record${rows.length === 1 ? '' : 's'} downloaded.`);
+  };
 
-  const chartSummary = useMemo(() => buildChartSummary(filteredData), [filteredData]);
-
-  const activityChartData = useMemo(() => ({
-    labels: chartSummary.dailyLabels,
-    datasets: [
-      {
-        label: 'Text',
-        data: chartSummary.dailyText,
-        backgroundColor: '#6366f1',
-        borderRadius: 8,
-        maxBarThickness: 34,
-      },
-      {
-        label: 'Images',
-        data: chartSummary.dailyImage,
-        backgroundColor: '#0ea5e9',
-        borderRadius: 8,
-        maxBarThickness: 34,
-      },
-    ],
-  }), [chartSummary]);
-
-  const resultChartData = useMemo(() => ({
-    labels: ['Offensive', 'Non-offensive', 'Needs Review'],
-    datasets: [
-      {
-        data: [chartSummary.offensive, chartSummary.safe, chartSummary.unknown],
-        backgroundColor: ['#ef4444', '#10b981', '#f59e0b'],
-        borderColor: 'rgba(255,255,255,0.9)',
-        borderWidth: 3,
-        hoverOffset: 8,
-      },
-    ],
-  }), [chartSummary]);
-
-  const barOptions = useMemo(() => ({
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'bottom',
-        labels: { usePointStyle: true, boxWidth: 8, color: '#64748b', font: { weight: 700 } },
-      },
-      tooltip: {
-        callbacks: {
-          title: (items) => `${items[0]?.label || ''}`,
-          label: (item) => `${item.dataset.label}: ${item.raw} analyses`,
-        },
-      },
-    },
-    scales: {
-      x: {
-        stacked: true,
-        grid: { display: false },
-        ticks: { color: '#64748b', font: { weight: 700 } },
-      },
-      y: {
-        stacked: true,
-        beginAtZero: true,
-        ticks: { precision: 0, color: '#64748b', font: { weight: 700 } },
-        grid: { color: 'rgba(100, 116, 139, 0.12)' },
-      },
-    },
-  }), []);
-
-  const doughnutOptions = useMemo(() => ({
-    responsive: true,
-    maintainAspectRatio: false,
-    cutout: '68%',
-    plugins: {
-      legend: {
-        position: 'bottom',
-        labels: { usePointStyle: true, boxWidth: 8, color: '#64748b', font: { weight: 700 } },
-      },
-      tooltip: {
-        callbacks: {
-          label: (item) => `${item.label}: ${item.raw} records`,
-        },
-      },
-    },
-  }), []);
+  const chartData = {
+    labels: ['Offensive', 'Non-offensive'],
+    datasets: [{ data: [stats.offensive, stats.safe], backgroundColor: ['#dc2626', '#059669'], borderWidth: 0 }],
+  };
 
   return (
-    <main className="page" style={{ padding: '32px 20px', maxWidth: '1500px', margin: '0 auto' }}>
-      <section className="dashboard-hero" style={{ minHeight: '170px', marginBottom: '22px' }}>
-        <div>
-          <span className="eyebrow"><Sparkles size={15} /> Personal Records</span>
-          <h1>Prediction History</h1>
-          <p>Your saved text and image analysis records. Search, filter, and review previous predictions.</p>
-        </div>
-        <div className="dashboard-actions">
-          <button onClick={loadHistory} className="dash-action primary-action" type="button">
-            <RefreshCw size={17} /> Refresh
-          </button>
-        </div>
+    <main className="page sg-history-page">
+      <PageHeader
+        eyebrow="Research records"
+        title="Prediction history"
+        description="Search and review the text and image predictions saved to your account. Confidence values are the model scores stored with each prediction."
+        actions={<button className="sg-button sg-button-outline" type="button" onClick={loadHistory} disabled={loading}><RefreshCw size={16} className={loading ? 'sg-spin' : ''} /> Refresh</button>}
+      />
+
+      {error && <Alert type="error">{error}</Alert>}
+
+      <section className="sg-history-summary" aria-label="Prediction totals">
+        <Summary title="Total predictions" value={stats.total} emphasis />
+        <Summary title="Offensive" value={stats.offensive} tone="offensive" />
+        <Summary title="Non-offensive" value={stats.safe} tone="safe" />
+        <Summary title="Text / Image" value={`${stats.text} / ${stats.image}`} />
       </section>
 
-      <section className="responsive-grid history-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '20px' }}>
-        <Metric title="Total" value={stats.total} color="#3b82f6" />
-        <Metric title="Text" value={stats.text} color="#6366f1" />
-        <Metric title="Images" value={stats.image} color="#0ea5e9" />
-        <Metric title="Offensive" value={stats.offensive} color="#ef4444" />
-        <Metric title="Safe" value={stats.safe} color="#10b981" />
-      </section>
-
-      <section className="card history-filter-card" style={{ padding: '22px', borderRadius: '16px', border: '1px solid var(--line)', marginBottom: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative', flex: '1 1 320px' }}>
-            <Search size={17} style={{ position: 'absolute', left: '13px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search text, date, or type"
-              style={{ width: '100%', padding: '12px 14px 12px 40px', borderRadius: '10px', border: '1px solid var(--line)', background: 'var(--bg)', color: 'var(--text)', margin: 0 }}
-            />
+      <div className="sg-history-insights">
+        <Card title="Result distribution" description="Calculated from your saved classified records.">
+          <div className="sg-history-chart">
+            {stats.offensive + stats.safe > 0
+              ? <Doughnut data={chartData} options={{ responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } } } }} />
+              : <EmptyState title="No chart data" description="Run an analysis to create your first saved result." />}
           </div>
-
-          <div style={{ display: 'flex', background: 'var(--bg)', borderRadius: '10px', border: '1px solid var(--line)', padding: '4px', flexWrap: 'wrap' }}>
-            <FilterButton label="All" active={filter === 'all'} onClick={() => setFilter('all')} />
-            <FilterButton label="Text" active={filter === 'text'} onClick={() => setFilter('text')} />
-            <FilterButton label="Image" active={filter === 'image'} onClick={() => setFilter('image')} />
-            <FilterButton label="Offensive" active={filter === 'offensive'} onClick={() => setFilter('offensive')} />
-            <FilterButton label="Safe" active={filter === 'safe'} onClick={() => setFilter('safe')} />
+        </Card>
+        <Card title="Download report" description="Export your own records as an editable CSV file.">
+          <div className="sg-report-controls">
+            <label htmlFor="report-type">Records to include</label>
+            <select id="report-type" className="sg-input" value={reportType} onChange={(event) => { setReportType(event.target.value); setReportMessage(''); }}>
+              <option value="all">All predictions</option>
+              <option value="text">Text only</option>
+              <option value="image">Image only</option>
+              <option value="offensive">Offensive only</option>
+              <option value="safe">Non-offensive only</option>
+            </select>
+            <button className="sg-button sg-button-primary" type="button" onClick={downloadReport} disabled={loading || !history.length}><Download size={17} /> Download CSV</button>
+            {reportMessage && <p role="status">{reportMessage}</p>}
           </div>
+        </Card>
+      </div>
+
+      <Card title="All predictions" description={`${filtered.length} matching record${filtered.length === 1 ? '' : 's'}`}>
+        <div className="sg-table-toolbar">
+          <label className="sg-search-field"><Search size={17} /><span className="sr-only">Search history</span><input className="sg-input" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search prediction content" /></label>
+          <select className="sg-input" aria-label="Filter by classification" value={classification} onChange={(event) => { setClassification(event.target.value); setPage(1); }}><option value="all">All results</option><option value="offensive">Offensive</option><option value="safe">Non-offensive</option></select>
+          <select className="sg-input" aria-label="Filter by input type" value={inputType} onChange={(event) => { setInputType(event.target.value); setPage(1); }}><option value="all">All input types</option><option value="text">Text</option><option value="image">Image</option></select>
+          <input className="sg-input" type="date" aria-label="Filter by date" value={date} onChange={(event) => { setDate(event.target.value); setPage(1); }} />
         </div>
-      </section>
 
-      {!loading && !error && (
-        <section className="history-charts-grid responsive-grid" style={{ display: 'grid', gridTemplateColumns: '1.45fr 0.9fr', gap: '18px', marginBottom: '20px' }}>
-          <ChartPanel
-            title="Analysis Activity"
-            subtitle="Text and image checks during the last 7 days"
-            footer={`${chartSummary.totalVisible} visible records`}
-          >
-            {chartSummary.totalVisible > 0 ? (
-              <Bar data={activityChartData} options={barOptions} />
-            ) : (
-              <EmptyChart message="No activity to chart for this filter." />
-            )}
-          </ChartPanel>
-
-          <ChartPanel
-            title="Result Breakdown"
-            subtitle="Offensive, non-offensive, and uncertain results"
-            footer={`${chartSummary.reviewRate}% marked for review`}
-          >
-            {chartSummary.totalVisible > 0 ? (
-              <>
-                <Doughnut data={resultChartData} options={doughnutOptions} />
-                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
-                  <div style={{ textAlign: 'center', marginTop: '-28px' }}>
-                    <strong style={{ display: 'block', fontSize: '28px', color: 'var(--text)' }}>{chartSummary.totalVisible}</strong>
-                    <span style={{ color: 'var(--muted)', fontSize: '12px', fontWeight: 900 }}>Records</span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <EmptyChart message="No result data for this filter." />
-            )}
-          </ChartPanel>
-        </section>
-      )}
-
-      {error && (
-        <div className="alert-error" style={{ marginBottom: '18px', padding: '12px', borderRadius: '8px', fontSize: '14px' }}>
-          <AlertCircle size={16} />
-          <span style={{ fontWeight: 600 }}>{error}</span>
-        </div>
-      )}
-
-      {loading ? (
-        <section className="card" style={{ minHeight: '360px', display: 'grid', placeItems: 'center', color: 'var(--muted)', textAlign: 'center' }}>
-          <div>
-            <RefreshCw className="spin" size={42} style={{ color: '#6366f1', marginBottom: '14px' }} />
-            <h3 style={{ margin: '0 0 8px' }}>Loading history...</h3>
-            <p style={{ margin: 0 }}>Fetching your saved predictions.</p>
+        {loading ? <LoadingState message="Loading prediction history…" /> : !visibleRows.length ? (
+          <EmptyState title="No predictions found" description="Adjust the filters or run a new text or image analysis." />
+        ) : (
+          <div className="sg-table-wrap">
+            <table className="sg-table">
+              <thead><tr><th>Date</th><th>Input type</th><th>Content preview</th><th>Classification</th><th>Confidence</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody>{visibleRows.map((row) => <HistoryRow key={row.id} row={row} onView={() => setSelected(row)} />)}</tbody>
+            </table>
           </div>
-        </section>
-      ) : filteredData.length === 0 ? (
-        <section className="card" style={{ minHeight: '360px', display: 'grid', placeItems: 'center', color: 'var(--muted)', textAlign: 'center' }}>
-          <div>
-            <Clock size={54} style={{ color: '#6366f1', marginBottom: '14px' }} />
-            <h3 style={{ margin: '0 0 8px' }}>No records found</h3>
-            <p style={{ margin: 0 }}>Try a different filter or run a new analysis.</p>
-          </div>
-        </section>
-      ) : (
-        <section style={{ display: 'grid', gap: '14px' }}>
-          {filteredData.map((row) => (
-            <HistoryCard key={row.id} row={row} />
-          ))}
-        </section>
-      )}
+        )}
 
-      <style>{`
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        .spin { animation: spin 1s linear infinite; }
-      `}</style>
+        {!loading && filtered.length > PAGE_SIZE && (
+          <nav className="sg-pagination" aria-label="History pagination">
+            <span>Page {page} of {totalPages}</span>
+            <div><button className="sg-button sg-button-outline" type="button" disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button><button className="sg-button sg-button-outline" type="button" disabled={page === totalPages} onClick={() => setPage((value) => value + 1)}>Next</button></div>
+          </nav>
+        )}
+      </Card>
+
+      {selected && <PredictionDialog row={selected} onClose={() => setSelected(null)} />}
     </main>
   );
 };
 
-const HistoryCard = ({ row }) => {
-  const offensive = isOffensive(row.prediction);
-  const color = offensive ? '#ef4444' : '#10b981';
-  const displayText = row.extracted_text || row.original_text || row.cleaned_text || 'No text detected';
+const Summary = ({ title, value, tone = '', emphasis = false }) => <article className={`sg-summary ${tone} ${emphasis ? 'emphasis' : ''}`}><span>{title}</span><strong>{value}</strong></article>;
 
-  return (
-    <article className="card" style={{ padding: '18px', borderRadius: '16px', border: '1px solid var(--line)' }}>
-      <div className="responsive-record-card" style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 0.75fr) minmax(280px, 2fr) minmax(220px, 0.9fr)', gap: '18px', alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: row.input_type === 'image' ? 'rgba(14, 165, 233, 0.12)' : 'rgba(99, 102, 241, 0.12)', color: row.input_type === 'image' ? '#0ea5e9' : '#6366f1', display: 'grid', placeItems: 'center' }}>
-            {row.input_type === 'image' ? <FileImage size={22} /> : <FileText size={22} />}
-          </div>
-          <div>
-            <h3 style={{ margin: '0 0 4px', fontSize: '16px', textTransform: 'capitalize' }}>{row.input_type} Analysis</h3>
-            <p style={{ margin: 0, color: 'var(--muted)', fontSize: '13px' }}>{formatDate(row.created_at)}</p>
-          </div>
-        </div>
-
-        <div>
-          <p style={{ margin: '0 0 8px', color: 'var(--text)', lineHeight: 1.55, fontWeight: 600 }}>{displayText}</p>
-          <p style={{ margin: 0, color: 'var(--muted)', fontSize: '13px' }}>Saved analysis · {formatDate(row.created_at)}</p>
-        </div>
-
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: offensive ? 'rgba(239, 68, 68, 0.08)' : 'rgba(16, 185, 129, 0.08)', color, padding: '6px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 900 }}>
-              {offensive ? <ShieldAlert size={15} /> : <CheckCircle2 size={15} />}
-              {formatPrediction(row.prediction)}
-            </span>
-          </div>
-        </div>
-      </div>
-    </article>
-  );
+const HistoryRow = ({ row, onView }) => {
+  const text = row.extracted_text || row.original_text || row.cleaned_text || 'No readable text';
+  return <tr><td data-label="Date">{formatDate(row.created_at)}</td><td data-label="Input type"><span className="sg-type-cell">{row.input_type === 'image' ? <FileImage size={16} /> : <FileText size={16} />}{row.input_type || 'text'}</span></td><td data-label="Content"><span className="sg-content-preview" title={text}>{text}</span></td><td data-label="Classification"><ResultBadge prediction={row.prediction} /></td><td data-label="Confidence"><strong>{confidence(row.confidence)}</strong></td><td><button className="sg-button sg-button-ghost sg-icon-action" type="button" onClick={onView} aria-label={`View prediction ${row.id}`}><Eye size={17} /> View</button></td></tr>;
 };
 
-const Metric = ({ title, value, color }) => (
-  <div className="card" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--line)', borderLeft: `4px solid ${color}` }}>
-    <p style={{ color: 'var(--muted)', margin: '0 0 6px', fontWeight: 900, fontSize: '12px', textTransform: 'uppercase' }}>{title}</p>
-    <h2 style={{ margin: 0, fontSize: '30px', color }}>{value}</h2>
-  </div>
-);
-
-const FilterButton = ({ label, active, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    style={{ padding: '8px 12px', border: 'none', background: active ? 'var(--card)' : 'transparent', color: active ? 'var(--text)' : 'var(--muted)', borderRadius: '8px', fontSize: '13px', fontWeight: 900, cursor: 'pointer' }}
-  >
-    {label}
-  </button>
-);
-
-const ChartPanel = ({ title, subtitle, footer, children }) => (
-  <section className="card" style={{ padding: '22px', borderRadius: '16px', border: '1px solid var(--line)' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'flex-start', marginBottom: '16px', flexWrap: 'wrap' }}>
-      <div>
-        <h2 style={{ margin: '0 0 5px', fontSize: '20px' }}>{title}</h2>
-        <p style={{ margin: 0, color: 'var(--muted)', fontSize: '14px' }}>{subtitle}</p>
-      </div>
-      <span style={{ border: '1px solid var(--line)', color: 'var(--muted)', background: 'var(--bg)', borderRadius: '999px', padding: '7px 10px', fontSize: '12px', fontWeight: 900 }}>
-        {footer}
-      </span>
-    </div>
-    <div style={{ position: 'relative', height: '290px' }}>
-      {children}
-    </div>
-  </section>
-);
-
-const EmptyChart = ({ message }) => (
-  <div style={{ height: '100%', display: 'grid', placeItems: 'center', textAlign: 'center', color: 'var(--muted)', border: '1px dashed var(--line)', borderRadius: '14px', background: 'var(--bg)' }}>
-    <div>
-      <Clock size={38} style={{ color: '#6366f1', marginBottom: '10px' }} />
-      <p style={{ margin: 0, fontWeight: 800 }}>{message}</p>
-    </div>
-  </div>
-);
-
-const isOffensive = (prediction) => {
-  const lower = String(prediction || '').toLowerCase();
-  return lower.includes('offensive') && !lower.includes('non');
+const PredictionDialog = ({ row, onClose }) => {
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    const focusable = () => [...dialogRef.current.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')];
+    focusable()[0]?.focus();
+    const handleKeyboard = (event) => {
+      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', handleKeyboard);
+    return () => { document.removeEventListener('keydown', handleKeyboard); previousFocus?.focus(); };
+  }, [onClose]);
+  const copyText = () => navigator.clipboard?.writeText(row.extracted_text || row.original_text || row.cleaned_text || '');
+  return <div className="sg-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={dialogRef} className="sg-modal" role="dialog" aria-modal="true" aria-labelledby="prediction-dialog-title"><header><div><span className="sg-eyebrow">Prediction #{row.id}</span><h2 id="prediction-dialog-title">Prediction details</h2></div><button className="sg-icon-button" type="button" onClick={onClose} aria-label="Close prediction details"><X size={18} /></button></header><div className="sg-modal-body"><dl className="sg-detail-grid"><div><dt>Input type</dt><dd>{row.input_type || 'text'}</dd></div><div><dt>Classification</dt><dd><ResultBadge prediction={row.prediction} /></dd></div><div><dt>Model confidence</dt><dd>{confidence(row.confidence)}</dd></div><div><dt>Date and time</dt><dd>{formatDate(row.created_at)}</dd></div><div><dt>Model</dt><dd>{row.model_name || 'Not provided'}</dd></div><div><dt>Saved record</dt><dd>Yes</dd></div></dl><DetailText title="Original text" value={row.original_text} /><DetailText title="Extracted OCR text" value={row.extracted_text} /><DetailText title="Preprocessed text" value={row.cleaned_text} /></div><footer><button className="sg-button sg-button-outline" type="button" onClick={copyText}><Copy size={16} /> Copy available text</button><button className="sg-button sg-button-primary" type="button" onClick={onClose}>Close</button></footer></section></div>;
 };
 
-const isSafe = (prediction) => String(prediction || '').toLowerCase().includes('non');
-
-const formatPrediction = (prediction) => {
-  if (isOffensive(prediction)) return 'OFFENSIVE';
-  if (isSafe(prediction)) return 'NON-OFFENSIVE';
-  return String(prediction || 'UNKNOWN').toUpperCase();
-};
-
-const formatDate = (value) => {
-  if (!value) return '';
-  return new Date(value).toLocaleString();
-};
-
-const buildChartSummary = (rows) => {
-  const today = new Date();
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(today);
-    date.setHours(0, 0, 0, 0);
-    date.setDate(today.getDate() - (6 - index));
-    return date;
-  });
-  const dayKeys = days.map((date) => toDateKey(date));
-  const daily = dayKeys.reduce((acc, key) => {
-    acc[key] = { text: 0, image: 0 };
-    return acc;
-  }, {});
-
-  let offensive = 0;
-  let safe = 0;
-  let unknown = 0;
-
-  rows.forEach((row) => {
-    if (isOffensive(row.prediction)) {
-      offensive += 1;
-    } else if (isSafe(row.prediction)) {
-      safe += 1;
-    } else {
-      unknown += 1;
-    }
-
-    const key = toDateKey(row.created_at);
-    if (!daily[key]) return;
-    if (row.input_type === 'image') {
-      daily[key].image += 1;
-    } else {
-      daily[key].text += 1;
-    }
-  });
-
-  const totalVisible = rows.length;
-
-  return {
-    dailyLabels: days.map((date) => date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })),
-    dailyText: dayKeys.map((key) => daily[key].text),
-    dailyImage: dayKeys.map((key) => daily[key].image),
-    offensive,
-    safe,
-    unknown,
-    totalVisible,
-    reviewRate: totalVisible ? Math.round((unknown / totalVisible) * 100) : 0,
-  };
-};
-
-const toDateKey = (value) => {
-  const date = value ? new Date(value) : new Date();
-  if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
+const DetailText = ({ title, value }) => value ? <section className="sg-detail-text"><h3>{title}</h3><p>{value}</p></section> : null;
+const ResultBadge = ({ prediction }) => <span className={`sg-badge ${isOffensive(prediction) ? 'sg-badge-offensive' : isSafe(prediction) ? 'sg-badge-safe' : 'sg-badge-warning'}`}>{label(prediction)}</span>;
+const isOffensive = (value) => { const text = String(value || '').toLowerCase(); return text.includes('offensive') && !text.includes('non'); };
+const isSafe = (value) => String(value || '').toLowerCase().includes('non');
+const label = (value) => isOffensive(value) ? 'Offensive' : isSafe(value) ? 'Non-offensive' : 'Unclassified';
+const confidence = (value) => { const number = Number(value); return value !== null && value !== '' && Number.isFinite(number) ? `${(number * 100).toFixed(2)}%` : 'Not available'; };
+const formatDate = (value) => value ? new Date(value).toLocaleString() : 'Not available';
+const toDateKey = (value) => { if (!value) return ''; const date = new Date(value); if (Number.isNaN(date.getTime())) return ''; return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
+const csvCell = (value) => { let text = String(value ?? ''); if (/^[=+\-@]/.test(text)) text = `'${text}`; return `"${text.replace(/"/g, '""')}"`; };
 
 export default History;

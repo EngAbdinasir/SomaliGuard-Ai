@@ -5,16 +5,14 @@ import {
   Contact,
   FileImage,
   History,
-  Home,
   LayoutDashboard,
-  LogIn,
   LogOut,
   Menu,
   Moon,
-  PanelLeftClose,
   ShieldCheck,
   Sun,
   Type,
+  Users,
   X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -26,49 +24,63 @@ const Navbar = () => {
   const fileInputRef = useRef(null);
   const [theme, setTheme] = useState(localStorage.getItem('somaliGuardTheme') || 'light');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [localPreview, setLocalPreview] = useState('');
 
   useEffect(() => {
-    document.body.classList.toggle('dark', theme === 'dark');
+    const applyTheme = () => {
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.body.classList.toggle('dark', theme === 'dark' || (theme === 'system' && systemDark));
+    };
+    applyTheme();
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    media.addEventListener('change', applyTheme);
+    return () => media.removeEventListener('change', applyTheme);
   }, [theme]);
 
   useEffect(() => {
-    setLocalPreview('');
-  }, [currentUser?.profile_picture_url]);
+    const syncTheme = () => setTheme(localStorage.getItem('somaliGuardTheme') || 'light');
+    window.addEventListener('themechange', syncTheme);
+    return () => window.removeEventListener('themechange', syncTheme);
+  }, []);
 
-  useEffect(() => {
-    return () => {
-      if (localPreview) URL.revokeObjectURL(localPreview);
-    };
+  useEffect(() => () => {
+    if (localPreview) URL.revokeObjectURL(localPreview);
   }, [localPreview]);
 
+  useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, []);
+
   const toggleTheme = () => {
-    const updatedTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(updatedTheme);
-    localStorage.setItem('somaliGuardTheme', updatedTheme);
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+    localStorage.setItem('somaliGuardTheme', nextTheme);
     window.dispatchEvent(new Event('themechange'));
   };
 
-  const closeSidebar = () => {
+  const closeMenus = () => {
     setSidebarOpen(false);
-    setProfileOpen(false);
   };
 
   const handleLogout = () => {
     logout();
-    closeSidebar();
+    closeMenus();
     navigate('/login');
   };
 
   const handleProfilePictureChange = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      setUploadError('Please choose an image file.');
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setUploadError('Choose a PNG, JPG, JPEG, or WEBP image.');
       return;
     }
 
@@ -76,142 +88,81 @@ const Navbar = () => {
     setLocalPreview(URL.createObjectURL(file));
     setUploading(true);
     setUploadError('');
-
     const result = await updateProfilePicture(file);
     if (!result.success) {
       setUploadError(result.error);
       setLocalPreview('');
     }
-
     setUploading(false);
     event.target.value = '';
   };
 
   const displayName = currentUser?.full_name || currentUser?.name || 'User';
-  const isAdmin = currentUser?.role === 'admin';
   const avatarSrc = localPreview || currentUser?.profile_picture_url;
-
+  const isAdmin = currentUser?.role === 'admin';
   const navItems = [
-    ...(isAdmin ? [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }] : []),
-    { to: '/', label: 'Home', icon: Home },
+    { to: '/', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/predict-text', label: 'Analyze Text', icon: Type },
     { to: '/analyze', label: 'Analyze Image', icon: FileImage },
-    { to: '/history', label: 'History', icon: History },
+    { to: '/history', label: 'Prediction History', icon: History },
     { to: '/about', label: 'About', icon: ShieldCheck },
     { to: '/contact', label: 'Contact', icon: Contact },
   ];
+  const adminItems = isAdmin ? [
+    { to: '/dashboard', label: 'Admin Dashboard', icon: LayoutDashboard },
+    { to: '/users', label: 'User Management', icon: Users },
+  ] : [];
+
+  const renderLink = ({ to, label, icon: Icon }) => (
+    <Link
+      key={to}
+      to={to}
+      className={location.pathname === to ? 'active' : ''}
+      aria-current={location.pathname === to ? 'page' : undefined}
+      onClick={closeMenus}
+    >
+      <Icon size={19} aria-hidden="true" />
+      <span>{label}</span>
+    </Link>
+  );
 
   return (
     <>
-      <button
-        type="button"
-        className="sidebar-mobile-toggle"
-        onClick={() => setSidebarOpen(true)}
-        aria-label="Open sidebar"
-      >
-        <Menu size={20} />
-      </button>
+      {sidebarOpen && <button type="button" className="sg-nav-backdrop" onClick={closeMenus} aria-label="Close navigation" />}
 
-      {sidebarOpen && (
-        <button
-          type="button"
-          className="sidebar-backdrop"
-          onClick={closeSidebar}
-          aria-label="Close sidebar"
-        />
-      )}
-
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-        <div className="sidebar-header">
-          <Link to="/" className="sidebar-brand" onClick={closeSidebar}>
-            <div className="brand-icon">
-              <ShieldCheck size={23} />
-            </div>
-            <div>
-              <h3>SomaliGuard AI</h3>
-              <p>Offensive Text Detection</p>
-            </div>
+      <aside id="primary-sidebar" className={`sg-sidebar ${sidebarOpen ? 'open' : ''}`}>
+        <div className="sg-sidebar-brand">
+          <Link to="/" onClick={closeMenus} aria-label="SomaliGuard AI dashboard">
+            <span><ShieldCheck size={22} /></span>
+            <div><strong>SomaliGuard AI</strong><small>Somali NLP research system</small></div>
           </Link>
-
-          <button type="button" className="sidebar-close" onClick={closeSidebar} aria-label="Close sidebar">
-            <X size={18} />
-          </button>
+          <button type="button" className="sg-sidebar-mobile-close" onClick={closeMenus} aria-label="Close navigation"><X size={19} /></button>
         </div>
 
-        <div className="sidebar-status">
-          <span className="status-dot" />
-          <div>
-            <strong>Research Model Online</strong>
-            <small>Transformer + OCR Pipeline</small>
-          </div>
-        </div>
-
-        <nav className="sidebar-nav" aria-label="Main navigation">
-          {navItems.map(({ to, label, icon: Icon }) => (
-            <Link
-              key={to}
-              to={to}
-              className={location.pathname === to ? 'active' : ''}
-              onClick={closeSidebar}
-            >
-              <Icon size={19} />
-              <span>{label}</span>
-            </Link>
-          ))}
+        <nav className="sg-sidebar-nav" aria-label="Primary navigation">
+          <small>Research workspace</small>
+          {navItems.map(renderLink)}
+          {adminItems.length > 0 && <small>Administration</small>}
+          {adminItems.map(renderLink)}
         </nav>
 
-        <div className="sidebar-footer">
-          <button type="button" className="sidebar-theme" onClick={toggleTheme}>
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+        <div className="sg-sidebar-bottom">
+          <div className="sg-sidebar-user">
+            <span className="sg-avatar">{avatarSrc ? <img src={avatarSrc} alt={`${displayName} profile`} /> : displayName.charAt(0).toUpperCase()}</span>
+            <span className="sg-sidebar-user-copy"><strong>{displayName}</strong><small>{currentUser?.role || 'user'}</small></span>
+            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={handleProfilePictureChange} hidden />
+            <button type="button" className="sg-sidebar-photo" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Change profile photo"><Camera size={15} /></button>
+          </div>
+          {uploadError && <p className="sg-sidebar-error" role="alert">{uploadError}</p>}
+          <button type="button" onClick={toggleTheme}>
+            {theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}<span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
           </button>
-
-          {currentUser ? (
-            <div className="sidebar-user">
-              <button type="button" className="sidebar-user-button" onClick={() => setProfileOpen(!profileOpen)}>
-                <div className="user-avatar">
-                  {avatarSrc ? (
-                    <img src={avatarSrc} alt={`${displayName} profile`} />
-                  ) : (
-                    displayName.charAt(0).toUpperCase()
-                  )}
-                </div>
-                <div>
-                  <strong>{displayName.split(' ')[0]}</strong>
-                  <small>{currentUser.role || 'user'}</small>
-                </div>
-                <PanelLeftClose size={17} />
-              </button>
-
-              {profileOpen && (
-                <div className="sidebar-user-menu">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleProfilePictureChange}
-                    style={{ display: 'none' }}
-                  />
-                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-                    <Camera size={16} />
-                    {uploading ? 'Uploading...' : 'Change Photo'}
-                  </button>
-                  {uploadError && <p>{uploadError}</p>}
-                  <button type="button" className="danger" onClick={handleLogout}>
-                    <LogOut size={16} />
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <Link to="/login" className="sidebar-login" onClick={closeSidebar}>
-              <LogIn size={17} />
-              Login
-            </Link>
-          )}
+          <button type="button" className="danger" onClick={handleLogout}>
+            <LogOut size={19} /><span>Logout</span>
+          </button>
         </div>
       </aside>
+      <button type="button" className="sg-mobile-menu-floating" onClick={() => setSidebarOpen(true)} aria-label="Open navigation" aria-controls="primary-sidebar" aria-expanded={sidebarOpen}><Menu size={20} /></button>
     </>
   );
 };

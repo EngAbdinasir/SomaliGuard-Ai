@@ -1,29 +1,52 @@
-import React from 'react';
-import { AlertCircle, CheckCircle2, Eye, EyeOff } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Eye, EyeOff, LockKeyhole, ShieldCheck } from 'lucide-react';
 
-export const AuthPage = ({ children, maxWidth = 420 }) => (
-  <main className="auth-page">
-    <div className="auth-page-bg" />
-    <div className="auth-page-grid" />
-    <div className="auth-panel" style={{ maxWidth }}>
-      {children}
+export const AuthVisualPanel = ({
+  className = '',
+  subtitle,
+  kickerIcon,
+  kicker,
+  title,
+  description,
+  signals = [],
+}) => (
+  <aside className={`login-redesign-panel ${className}`}>
+    <div className="auth-visual-grid" aria-hidden="true" />
+
+    <div className="login-redesign-brand">
+      <span><ShieldCheck size={24} /></span>
+      <div>
+        <strong>SomaliGuard AI</strong>
+        <small>{subtitle}</small>
+      </div>
     </div>
-  </main>
+
+    <div className="login-redesign-copy">
+      <span className="login-redesign-kicker">{kickerIcon}{kicker}</span>
+      <h1>{title}</h1>
+      <p>{description}</p>
+    </div>
+
+    <div className="login-redesign-signals">
+      {signals.map(({ icon, label }) => (
+        <div key={label}>
+          <span>{icon}</span>
+          <strong>{label}</strong>
+        </div>
+      ))}
+    </div>
+
+    <div className="auth-visual-footer">
+      <span><i /> Secure workspace</span>
+      <span>Somali NLP research</span>
+    </div>
+  </aside>
 );
 
-export const AuthBrand = () => (
-  <div className="auth-brand">
-    <span className="auth-brand-mark">🧠</span>
-    <h1>SomaliGuard AI</h1>
+export const AuthCardTopline = ({ status }) => (
+  <div className="auth-card-topline">
+    <span className="auth-card-mini-brand"><ShieldCheck size={17} /> SomaliGuard AI</span>
+    <span className="auth-card-security"><LockKeyhole size={15} /> {status}</span>
   </div>
-);
-
-export const AuthCard = ({ title, subtitle, children }) => (
-  <section className="card auth-card-modern">
-    <h2>{title}</h2>
-    <p>{subtitle}</p>
-    {children}
-  </section>
 );
 
 export const AuthNotice = ({ type = 'error', text }) => {
@@ -31,7 +54,7 @@ export const AuthNotice = ({ type = 'error', text }) => {
   const success = type === 'success';
 
   return (
-    <div className={success ? 'auth-notice auth-notice-success' : 'auth-notice auth-notice-error'}>
+    <div className={success ? 'auth-notice auth-notice-success' : 'auth-notice auth-notice-error'} role={success ? 'status' : 'alert'}>
       {success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
       <span>{text}</span>
     </div>
@@ -50,7 +73,7 @@ export const AuthField = ({
       <label>{label}</label>
       {rightLabel}
     </div>
-    <div className="auth-input-wrap">
+    <div className="auth-input-wrap" role="group" aria-label={label}>
       {icon && <span className="auth-input-icon">{icon}</span>}
       {children}
     </div>
@@ -68,6 +91,7 @@ export const AuthPasswordInput = ({
   onToggle,
   placeholder = '••••••••',
   autoComplete,
+  disabled = false,
 }) => (
   <>
     <input
@@ -77,12 +101,14 @@ export const AuthPasswordInput = ({
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
       autoComplete={autoComplete}
+      disabled={disabled}
     />
     <button
       className="auth-icon-button"
       type="button"
       onClick={onToggle}
       aria-label={visible ? 'Hide password' : 'Show password'}
+      disabled={disabled}
     >
       {visible ? <EyeOff size={18} /> : <Eye size={18} />}
     </button>
@@ -105,12 +131,4 @@ export const AuthDivider = () => (
 
 export const AuthSwitchLink = ({ children }) => (
   <div className="auth-switch-link">{children}</div>
-);
-
-export const AuthFooter = () => (
-  <footer className="auth-footer">
-    <span>© 2025 SomaliGuard AI. All rights reserved.</span>
-    <a href="#">Terms</a>
-    <a href="#">Privacy</a>
-  </footer>
 );

@@ -1,153 +1,43 @@
+import { ArrowRight, Brain, Database, FileImage, Languages, ScanText, Server, ShieldCheck, Type } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import {
-  ArrowRight,
-  Brain,
-  CheckCircle2,
-  Database,
-  Eye,
-  FileImage,
-  FileText,
-  ScanText,
-  ShieldCheck,
-  Sparkles,
-  Users,
-} from 'lucide-react';
+import { Card, PageHeader } from '../components/ui/Primitives';
 
-const About = () => {
-  return (
-    <main className="page" style={{ padding: '32px 20px', maxWidth: '1500px', margin: '0 auto' }}>
-      <section className="dashboard-hero" style={{ minHeight: '230px', marginBottom: '22px' }}>
-        <div>
-          <span className="eyebrow"><Sparkles size={15} /> Academic System Overview</span>
-          <h1>SomaliGuard AI Research Platform</h1>
-          <p>
-            A graduation project designed to analyze Somali text and image-based content through a clear machine learning workflow:
-            data input, text extraction, preprocessing, model prediction, and saved review history.
-          </p>
-        </div>
-        <div className="dashboard-actions">
-          <Link to="/predict-text" className="dash-action primary-action">
-            Analyze Text <ArrowRight size={17} />
-          </Link>
-          <Link to="/analyze" className="dash-action">
-            Analyze Image <FileImage size={17} />
-          </Link>
-        </div>
-      </section>
+const About = () => (
+  <main className="page sg-about-page">
+    <PageHeader
+      eyebrow="Graduation project"
+      title="About SomaliGuard AI"
+      description="A web-based research system for detecting offensive and non-offensive Somali text from direct writing and social-media images."
+      actions={<Link className="sg-button sg-button-primary" to="/predict-text">Start an analysis <ArrowRight size={16} /></Link>}
+    />
 
-      <section className="responsive-grid three-cols" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '18px', marginBottom: '22px' }}>
-        <ValueCard
-          icon={<ShieldCheck size={25} />}
-          title="Research Problem"
-          text="Somali online content needs moderation tools that understand local language patterns and can support safer digital communication."
-          color="#3b82f6"
-        />
-        <ValueCard
-          icon={<Eye size={25} />}
-          title="System Contribution"
-          text="The project combines a trained transformer model, OCR, a Flask API, and a React interface into one usable academic prototype."
-          color="#10b981"
-        />
-        <ValueCard
-          icon={<Users size={25} />}
-          title="Target Users"
-          text="Designed for supervisors, students, researchers, and administrators who need clear prediction records and explainable workflows."
-          color="#8b5cf6"
-        />
-      </section>
-
-      <section className="responsive-grid two-cols" style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: '22px', alignItems: 'stretch', marginBottom: '22px' }}>
-        <div className="card" style={{ padding: '26px', borderRadius: '18px', border: '1px solid var(--line)' }}>
-          <h2 style={{ margin: '0 0 10px' }}>How It Works</h2>
-          <p style={{ margin: '0 0 22px', color: 'var(--muted)', lineHeight: 1.7 }}>
-            The system separates each stage so users can understand the process before the final result is shown.
-            Text analysis and image analysis both end with the same trained model prediction.
-          </p>
-
-          <div style={{ display: 'grid', gap: '14px' }}>
-            <ProcessStep number="1" icon={<FileText size={20} />} title="Input" text="Users type Somali text or upload an image containing Somali text." />
-            <ProcessStep number="2" icon={<ScanText size={20} />} title="Extraction and Preprocessing" text="Image text is extracted through OCR, and all text is prepared before prediction." />
-            <ProcessStep number="3" icon={<Brain size={20} />} title="Model Prediction" text="The backend sends the prepared text to the trained model and receives an offensive or non-offensive label." />
-            <ProcessStep number="4" icon={<Database size={20} />} title="Evidence Storage" text="Results are saved in the database for history, review, and academic demonstration." />
-          </div>
-        </div>
-
-        <div className="card" style={{ padding: '26px', borderRadius: '18px', border: '1px solid var(--line)', display: 'grid', alignContent: 'space-between', gap: '20px' }}>
-          <div>
-            <h2 style={{ margin: '0 0 10px' }}>What You Can Do</h2>
-            <p style={{ margin: 0, color: 'var(--muted)', lineHeight: 1.7 }}>
-              SomaliGuard AI gives users a focused workspace for checking text, reviewing image content,
-              saving results, and managing safer moderation workflows.
-            </p>
-          </div>
-
-          <div className="responsive-grid two-cols tight-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <TechBadge label="Text" value="Direct analysis" />
-            <TechBadge label="Images" value="Text extraction" />
-            <TechBadge label="Results" value="Clear labels" />
-            <TechBadge label="History" value="Saved records" />
-            <TechBadge label="Accounts" value="Verified access" />
-            <TechBadge label="Review" value="Admin tools" />
-          </div>
-        </div>
-      </section>
-
-      <section className="responsive-grid four-cols" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '18px', marginBottom: '22px' }}>
-        <FeatureCard icon={<CheckCircle2 size={22} />} title="Text Analysis" text="Classify direct Somali text input." />
-        <FeatureCard icon={<FileImage size={22} />} title="Image Analysis" text="Extract text from images before prediction." />
-        <FeatureCard icon={<Database size={22} />} title="Saved Records" text="Keep analysis history for each user." />
-        <FeatureCard icon={<ShieldCheck size={22} />} title="Review Tools" text="Manage users and review activity when needed." />
-      </section>
-
-      <section className="card" style={{ padding: '26px', borderRadius: '18px', border: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '20px', flexWrap: 'wrap', marginBottom: '22px' }}>
-        <div>
-          <h2 style={{ margin: '0 0 8px' }}>Ready to test it?</h2>
-          <p style={{ margin: 0, color: 'var(--muted)' }}>Run a text or image prediction and review the saved result in your history.</p>
-        </div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          <Link to="/predict-text" className="btn primary">Analyze Text</Link>
-          <Link to="/analyze" className="btn light">Analyze Image</Link>
-        </div>
-      </section>
-    </main>
-  );
-};
-
-const ValueCard = ({ icon, title, text, color }) => (
-  <div className="card" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--line)' }}>
-    <div style={{ width: '52px', height: '52px', borderRadius: '15px', background: `${color}18`, color, display: 'grid', placeItems: 'center', marginBottom: '16px' }}>
-      {icon}
+    <div className="sg-about-lead">
+      <section><ShieldCheck size={28} /><div><h2>The problem</h2><p>Large amounts of Somali social-media content are difficult to review manually. Text inside screenshots and memes also cannot be handled by an ordinary text-only classifier.</p></div></section>
+      <section><Languages size={28} /><div><h2>The project response</h2><p>SomaliGuard AI connects OCR, Somali text preprocessing, SomBERTa classification, a Flask API, and saved user history in one traceable workflow.</p></div></section>
     </div>
-    <h3 style={{ margin: '0 0 8px' }}>{title}</h3>
-    <p style={{ margin: 0, color: 'var(--muted)', lineHeight: 1.6 }}>{text}</p>
-  </div>
+
+    <Card title="Two supported analysis paths" description="Both paths use the same deployed classification model.">
+      <div className="sg-path-grid">
+        <article><span><Type size={21} /></span><div><h3>Direct text</h3><p>Somali text → preprocessing → tokenizer → SomBERTa → result and confidence</p><Link to="/predict-text">Analyze text <ArrowRight size={14} /></Link></div></article>
+        <article><span><FileImage size={21} /></span><div><h3>Image with text</h3><p>Image → EasyOCR → preprocessing → tokenizer → SomBERTa → result and confidence</p><Link to="/analyze">Analyze image <ArrowRight size={14} /></Link></div></article>
+      </div>
+    </Card>
+
+    <section className="sg-technology-section">
+      <h2>Implemented technology layers</h2>
+      <p>Each layer has one clear responsibility in the working system.</p>
+      <div className="sg-technology-grid">
+        <Tech icon={<Languages size={20} />} label="Frontend" title="React + Vite" text="Forms, dashboards, result views, history, authentication, and administration." />
+        <Tech icon={<Server size={20} />} label="Application API" title="Python + Flask" text="Authentication, validation, preprocessing, OCR coordination, model inference, and JSON responses." />
+        <Tech icon={<Brain size={20} />} label="AI processing" title="SomBERTa + PyTorch" text="Contextual binary classification of preprocessed Somali text." />
+        <Tech icon={<ScanText size={20} />} label="Text extraction" title="EasyOCR" text="Reads text from uploaded JPG, JPEG, PNG, and WEBP images." />
+        <Tech icon={<Database size={20} />} label="Data layer" title="MySQL" text="Stores user accounts, verification data, contact messages, and prediction history." />
+      </div>
+    </section>
+
+    <div className="sg-scope-note"><strong>Current scope:</strong> Somali text, binary offensive/non-offensive classification, and image OCR. The system does not currently analyze audio, video, or multilingual content, and its results should support—not replace—human judgment.</div>
+  </main>
 );
 
-const ProcessStep = ({ number, icon, title, text }) => (
-  <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr', gap: '14px', alignItems: 'start', padding: '14px', border: '1px solid var(--line)', borderRadius: '12px', background: 'var(--bg)' }}>
-    <div style={{ width: '44px', height: '44px', borderRadius: '13px', background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 900 }}>
-      {number}
-    </div>
-    <div>
-      <h4 style={{ margin: '0 0 5px', display: 'flex', alignItems: 'center', gap: '8px' }}>{icon} {title}</h4>
-      <p style={{ margin: 0, color: 'var(--muted)', lineHeight: 1.55 }}>{text}</p>
-    </div>
-  </div>
-);
-
-const TechBadge = ({ label, value }) => (
-  <div style={{ border: '1px solid var(--line)', background: 'var(--bg)', borderRadius: '12px', padding: '14px' }}>
-    <div style={{ color: 'var(--muted)', fontSize: '12px', fontWeight: 900, marginBottom: '5px' }}>{label}</div>
-    <div style={{ color: 'var(--text)', fontWeight: 900 }}>{value}</div>
-  </div>
-);
-
-const FeatureCard = ({ icon, title, text }) => (
-  <div className="card" style={{ padding: '20px', borderRadius: '16px', border: '1px solid var(--line)' }}>
-    <div style={{ color: '#6366f1', marginBottom: '12px' }}>{icon}</div>
-    <h3 style={{ margin: '0 0 7px', fontSize: '17px' }}>{title}</h3>
-    <p style={{ margin: 0, color: 'var(--muted)', lineHeight: 1.55 }}>{text}</p>
-  </div>
-);
-
+const Tech = ({ icon, label, title, text }) => <article className="sg-tech-item"><span>{icon}</span><div><small>{label}</small><h3>{title}</h3><p>{text}</p></div></article>;
 export default About;

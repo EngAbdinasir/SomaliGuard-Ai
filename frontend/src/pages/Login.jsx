@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, BrainCircuit, Languages, Lock, Mail, ScanSearch, ShieldCheck } from 'lucide-react';
+import { ArrowRight, BrainCircuit, Languages, Lock, Mail, ScanSearch, Sparkles } from 'lucide-react';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import {
+  AuthCardTopline,
   AuthDivider,
   AuthField,
   AuthInput,
@@ -10,6 +11,7 @@ import {
   AuthPasswordInput,
   AuthPrimaryButton,
   AuthSwitchLink,
+  AuthVisualPanel,
 } from '../components/AuthUI';
 import { useAuth } from '../context/AuthContext';
 
@@ -26,14 +28,17 @@ const Login = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+    if (submitting) return;
 
-    if (!email || !password) {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail || !password) {
       setError('Please enter your details to sign in.');
       return;
     }
 
     setSubmitting(true);
-    const result = await login(email, password);
+    const result = await login(normalizedEmail, password);
     setSubmitting(false);
 
     if (result.success) {
@@ -44,6 +49,7 @@ const Login = () => {
   };
 
   const handleGoogleCredential = async (credential) => {
+    if (googleSubmitting) return;
     setGoogleSubmitting(true);
     setError('');
     const result = await loginWithGoogle(credential);
@@ -59,38 +65,21 @@ const Login = () => {
   return (
     <main className="login-redesign-page">
       <section className="login-redesign-shell">
-        <aside className="login-redesign-panel">
-          <div className="login-redesign-brand">
-              <span>🧠</span>
-              <div>
-                <strong>SomaliGuard AI</strong>
-              <small>Academic Moderation System</small>
-              </div>
-            </div>
-
-            <div className="login-redesign-copy">
-            <span className="login-redesign-kicker"><ShieldCheck size={15} /> Research workspace</span>
-            <h1>Analyze Somali text and images through a clear model workflow.</h1>
-            <p>Sign in to review predictions, inspect analysis history, and manage the Somali offensive-language detection system.</p>
-          </div>
-
-          <div className="login-redesign-signals">
-            <div>
-              <BrainCircuit size={20} />
-              <span>Model review</span>
-            </div>
-            <div>
-              <ScanSearch size={20} />
-              <span>OCR pipeline</span>
-            </div>
-            <div>
-              <Languages size={20} />
-              <span>Somali focused</span>
-            </div>
-          </div>
-        </aside>
+        <AuthVisualPanel
+          subtitle="Academic moderation platform"
+          kickerIcon={<Sparkles size={15} />}
+          kicker="Research workspace"
+          title="Safer Somali digital communication starts here."
+          description="Analyze written content, extract text from images, and review every result from one focused research workspace."
+          signals={[
+            { icon: <BrainCircuit size={20} />, label: 'Model analysis' },
+            { icon: <ScanSearch size={20} />, label: 'OCR workflow' },
+            { icon: <Languages size={20} />, label: 'Somali focused' },
+          ]}
+        />
 
         <section className="login-redesign-card">
+          <AuthCardTopline status="Verified access" />
           <div className="login-redesign-card-header">
             <span className="login-redesign-lock"><Lock size={22} /></span>
             <h2>Welcome back</h2>
@@ -136,6 +125,8 @@ const Login = () => {
           <AuthSwitchLink>
             Don't have an account? <Link to="/register">Sign up</Link>
           </AuthSwitchLink>
+
+          <p className="auth-card-footnote"><Lock size={14} /> Your session and account data are protected.</p>
         </section>
       </section>
     </main>

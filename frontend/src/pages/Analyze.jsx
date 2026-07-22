@@ -1,595 +1,286 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  AlertCircle,
-  ArrowLeft,
-  ArrowRight,
-  Brain,
-  Check,
-  CheckCircle2,
-  Clock,
-  Copy,
-  Download,
-  FileImage,
-  FileText,
-  Image as ImageIcon,
-  ListChecks,
-  RefreshCw,
-  Scan,
-  ShieldAlert,
-  Sparkles,
-  UploadCloud,
-  X,
-} from 'lucide-react';
-import { extractImageText, predictImage } from '../services/api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, Download, FileImage, LoaderCircle, RotateCcw, ShieldAlert, UploadCloud, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { predictImage } from '../services/api';
+import { Alert, Card, PageHeader } from '../components/ui/Primitives';
+
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_SIZE = 10 * 1024 * 1024;
+
+const STEP_DEFS = [
+  { key: 'upload', label: 'Upload image', description: 'Select or drop an image file' },
+  { key: 'ocr', label: 'OCR extraction', description: 'Reading Somali text from the image' },
+  { key: 'preprocessing', label: 'Preprocessing', description: 'Cleaning & normalizing extracted text' },
+  { key: 'predicting', label: 'Model prediction', description: 'SomBERTa classifies the content' },
+];
+
+const diffWords = (before, after) => {
+  const a = (before || '').split(/\s+/).filter(Boolean);
+  const b = (after || '').split(/\s+/).filter(Boolean);
+  const n = a.length;
+  const m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const segments = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { segments.push({ type: 'same', text: a[i] }); i += 1; j += 1; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { segments.push({ type: 'removed', text: a[i] }); i += 1; }
+    else { segments.push({ type: 'added', text: b[j] }); j += 1; }
+  }
+  while (i < n) { segments.push({ type: 'removed', text: a[i] }); i += 1; }
+  while (j < m) { segments.push({ type: 'added', text: b[j] }); j += 1; }
+  return segments;
+};
 
 const Analyze = () => {
+  const fileInput = useRef(null);
+  const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [status, setStatus] = useState('idle');
+  const [preview, setPreview] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [apiState, setApiState] = useState('idle'); // idle | loading | ready | error
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [copyStatus, setCopyStatus] = useState('idle');
-  const [step, setStep] = useState(1);
-  const [ocrResult, setOcrResult] = useState(null);
-  const fileInputRef = useRef(null);
-  const navigate = useNavigate();
 
-  const imageMeta = useMemo(() => {
-    if (!file) return null;
-    return {
-      name: file.name,
-      size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-      type: file.type || 'image',
-    };
-  }, [file]);
-
-  const textStats = useMemo(() => {
-    const value = result?.text || ocrResult?.extracted_text || '';
-    const trimmed = value.trim();
-    return {
-      words: trimmed ? trimmed.split(/\s+/).length : 0,
-      characters: value.length,
-    };
-  }, [ocrResult, result]);
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+  const prediction = useMemo(() => normalizeResult(result), [result]);
+  const noText = result ? (!result.extracted_text?.trim() || ['no_text_detected', 'no_somali_text_detected'].includes(String(result.prediction || '').toLowerCase())) : false;
 
   const chooseFile = (selected) => {
     if (!selected) return;
-    if (!selected.type.startsWith('image/')) {
-      setError('Please choose an image file.');
-      return;
-    }
-
+    if (!ALLOWED_TYPES.includes(selected.type)) { setError('Unsupported file type. Choose a JPG, JPEG, PNG, or WEBP image.'); return; }
+    if (selected.size > MAX_SIZE) { setError('The image is larger than 10 MB. Choose a smaller file.'); return; }
+    if (preview) URL.revokeObjectURL(preview);
     setFile(selected);
     setPreview(URL.createObjectURL(selected));
-    setStatus('idle');
     setResult(null);
-    setOcrResult(null);
     setError('');
     setCopyStatus('idle');
-    setStep(1);
-  };
-
-  const handleFileChange = (event) => {
-    chooseFile(event.target.files[0]);
-  };
-
-  const handleDragOver = (event) => {
-    event.preventDefault();
-    event.currentTarget.style.borderColor = '#6366f1';
-    event.currentTarget.style.background = 'rgba(99, 102, 241, 0.07)';
-  };
-
-  const handleDragLeave = (event) => {
-    event.currentTarget.style.borderColor = 'var(--line)';
-    event.currentTarget.style.background = 'var(--bg)';
-  };
-
-  const handleDrop = (event) => {
-    event.preventDefault();
-    event.currentTarget.style.borderColor = 'var(--line)';
-    event.currentTarget.style.background = 'var(--bg)';
-    chooseFile(event.dataTransfer.files[0]);
-  };
-
-  const normalizePrediction = (value) => {
-    const lower = String(value || '').toLowerCase();
-    if (lower.includes('offensive') && !lower.includes('non')) return 'OFFENSIVE';
-    if (lower.includes('non')) return 'NON-OFFENSIVE';
-    return String(value || 'UNKNOWN').toUpperCase();
-  };
-
-  const startAnalysis = async () => {
-    if (!file) {
-      setError('Please upload an image before running analysis.');
-      return;
-    }
-
-    setStatus('analyzing');
-    setError('');
-    setResult(null);
-    setCopyStatus('idle');
-
-    try {
-      const data = await predictImage(file);
-      const prediction = normalizePrediction(data.prediction);
-      const predictionValue = String(data.prediction || '').toLowerCase();
-      const noText = predictionValue === 'no_text_detected';
-      const tooMuchText = predictionValue === 'too_much_text_detected';
-      const noSomaliText = predictionValue === 'no_somali_text_detected';
-      const needsReview = predictionValue === 'needs_review';
-      const neutral = noText || noSomaliText || tooMuchText || needsReview;
-      const isOffensive = prediction === 'OFFENSIVE';
-      setResult({
-        text: data.extracted_text || '',
-        cleanedText: data.cleaned_text || '',
-        prediction: noText ? 'NO TEXT DETECTED' : tooMuchText ? 'TOO MUCH TEXT DETECTED' : noSomaliText || needsReview ? 'TEXT NEEDS REVIEW' : prediction,
-        noText,
-        tooMuchText,
-        noSomaliText,
-        needsReview,
-        neutral,
-        model: data.model_name || '',
-        historyId: data.history_id,
-        imageId: data.image_id,
-        classificationId: data.classification_result_id,
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' • ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        color: neutral ? '#64748b' : isOffensive ? '#ef4444' : '#10b981',
-        soft: neutral ? 'rgba(100, 116, 139, 0.08)' : isOffensive ? 'rgba(239, 68, 68, 0.08)' : 'rgba(16, 185, 129, 0.08)',
-        border: neutral ? 'rgba(100, 116, 139, 0.2)' : isOffensive ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-      });
-      setStatus('complete');
-      setStep(4);
-    } catch (err) {
-      setError(err.message);
-      setStatus('idle');
-    }
-  };
-
-  const runOcrExtraction = async () => {
-    if (!file) {
-      setError('Please upload an image before continuing.');
-      return;
-    }
-
-    setError('');
-    setResult(null);
-    setOcrResult(null);
-    setStatus('extracting');
-
-    try {
-      const data = await extractImageText(file);
-      setOcrResult(data);
-      setStatus('idle');
-      setStep(2);
-    } catch (err) {
-      setError(err.message);
-      setStatus('idle');
-    }
   };
 
   const reset = () => {
-    setFile(null);
-    setPreview(null);
-    setStatus('idle');
-    setResult(null);
-    setOcrResult(null);
-    setError('');
-    setCopyStatus('idle');
-    setStep(1);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(null); setPreview(''); setResult(null); setError(''); setCopyStatus('idle'); setApiState('idle'); setStep(1);
+    if (fileInput.current) fileInput.current.value = '';
   };
 
-  const copyWithFallback = (value) => {
-    const textarea = document.createElement('textarea');
-    textarea.value = value;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.select();
-
+  const runPrediction = async () => {
+    setApiState('loading');
+    setError('');
     try {
-      return document.execCommand('copy');
-    } finally {
-      document.body.removeChild(textarea);
+      const response = await predictImage(file);
+      setResult(response);
+      setApiState('ready');
+    } catch (requestError) {
+      setError(requestError.message);
+      setApiState('error');
     }
   };
+
+  const goToStep2 = () => {
+    if (!file) { setError('Choose an image before starting analysis.'); return; }
+    setResult(null); setCopyStatus('idle');
+    setStep(2);
+    runPrediction();
+  };
+  const goToStep3 = () => { if (apiState === 'ready') setStep(3); };
+  const goToStep4 = () => { if (apiState === 'ready') setStep(4); };
+  const backToStep = (target) => setStep(target);
+  const jumpToStep = (target) => { if (target < step) setStep(target); };
 
   const copyText = async () => {
-    const value = result?.text || '';
-    if (!value) {
-      setCopyStatus('empty');
-      setTimeout(() => setCopyStatus('idle'), 1800);
-      return;
-    }
-
-    try {
-      if (navigator.clipboard?.writeText && window.isSecureContext) {
-        await navigator.clipboard.writeText(value);
-      } else if (!copyWithFallback(value)) {
-        throw new Error('Copy failed.');
-      }
-      setCopyStatus('copied');
-    } catch {
-      setCopyStatus('failed');
-    }
+    if (!result?.extracted_text) { setCopyStatus('empty'); return; }
+    try { await navigator.clipboard.writeText(result.extracted_text); setCopyStatus('copied'); }
+    catch { setCopyStatus('failed'); }
     setTimeout(() => setCopyStatus('idle'), 1800);
   };
 
-  const downloadReport = () => {
-    if (!result) return;
-    const lines = [
-      'SomaliGuard AI Image Prediction Report',
-      `Prediction: ${result.prediction}`,
-      `Saved: ${result.historyId ? 'Yes' : 'No'}`,
-      `Processed At: ${result.date}`,
-      '',
-      'Extracted Text:',
-      result.text || 'No text detected',
-      '',
-      'Cleaned Text:',
-      result.cleanedText || 'No cleaned text',
-    ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `somaliguard-image-report-${result.historyId || Date.now()}.txt`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const download = () => {
+    if (!result || !prediction) return;
+    const report = ['SomaliGuard AI Image Prediction Report', `File: ${file?.name || 'Image'}`, `Prediction: ${prediction.label}`, `Model Confidence: ${formatConfidence(result.confidence)}`, `Saved to History: ${result.history_id ? 'Yes' : 'No'}`, '', 'Extracted OCR Text:', result.extracted_text || 'No readable text detected', '', 'Preprocessed Text:', result.cleaned_text || 'Not available'].join('\n');
+    const url = URL.createObjectURL(new Blob([report], { type: 'text/plain;charset=utf-8' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `somaliguard-image-report-${result.history_id || Date.now()}.txt`; anchor.click(); URL.revokeObjectURL(url);
   };
 
   return (
-    <main className="page" style={{ padding: '32px 20px', maxWidth: '1500px', margin: '0 auto' }}>
-      <section className="dashboard-hero" style={{ minHeight: '170px', marginBottom: '22px' }}>
-        <div>
-          <span className="eyebrow"><Sparkles size={15} /> Image Safety Check</span>
-          <h1>Analyze Somali Images</h1>
-          <p>Image Upload → Next → OCR Extraction → Next → Preprocessing → Prediction.</p>
-        </div>
-        <div className="dashboard-actions">
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="dash-action">
-            <UploadCloud size={17} /> Browse Image
-          </button>
-          <button type="button" onClick={reset} className="dash-refresh" aria-label="Clear image">
-            <X size={18} />
-          </button>
-        </div>
-      </section>
+    <main className="page sg-image-page">
+      <PageHeader eyebrow="OCR image classification" title="Analyze an image" description="Move through each step at your own pace: upload an image, review the OCR extraction, check preprocessing, then reveal the model prediction." />
 
-      <StepProgress
-        current={step}
-        steps={[
-          { title: 'Image Upload', text: 'Choose the image file.' },
-          { title: 'OCR Extraction', text: 'Read text from the image.' },
-          { title: 'Preprocessing', text: 'Clean extracted Somali text.' },
-          { title: 'Prediction', text: 'Model classifies the text.' },
-        ]}
-      />
+      <Card className="sg-steps-card" title="Analysis pipeline" description="Tap Next to move to the next step." style={{ marginBottom: 20 }}>
+        <AnalysisSteps currentStep={step} onStepClick={jumpToStep} />
+      </Card>
 
-      <section className="responsive-grid analyzer-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 0.95fr) minmax(430px, 1.45fr)', gap: '22px', alignItems: 'start' }}>
-        <div style={{ display: 'grid', gap: '22px' }}>
-          <section className="card" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--line)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
-              <div>
-                <h3 style={{ margin: '0 0 5px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <UploadCloud size={20} /> Upload Image
-                </h3>
-                <p style={{ margin: 0, color: 'var(--muted)', fontSize: '14px' }}>JPG, PNG, JPEG, or WEBP up to 10MB</p>
-              </div>
-              <span style={{ color: file ? '#10b981' : 'var(--muted)', fontWeight: 800, fontSize: '13px' }}>{file ? 'Ready' : 'Empty'}</span>
-            </div>
-
+      {step === 1 && (
+        <div className="sg-image-input-column">
+          <Card title="Step 1 · Upload image" description="JPG, JPEG, PNG, or WEBP · maximum 10 MB">
+            <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => chooseFile(event.target.files?.[0])} />
             <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                minHeight: '250px',
-                border: '2px dashed var(--line)',
-                borderRadius: '14px',
-                background: 'var(--bg)',
-                display: 'grid',
-                placeItems: 'center',
-                cursor: 'pointer',
-                padding: '26px',
-                textAlign: 'center',
-                transition: 'all 180ms ease',
-              }}
+              className={`sg-upload-zone ${dragging ? 'dragging' : ''} ${file ? 'has-file' : ''}`}
+              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => { event.preventDefault(); setDragging(false); chooseFile(event.dataTransfer.files?.[0]); }}
             >
-              <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" style={{ display: 'none' }} />
-              <div>
-                <UploadCloud size={46} color="#6366f1" style={{ marginBottom: '16px' }} />
-                <h4 style={{ margin: '0 0 8px', fontSize: '17px' }}>Drop an image here</h4>
-                <p style={{ margin: '0 0 16px', color: 'var(--muted)', fontSize: '14px' }}>or choose one from your device</p>
-                <button type="button" className="btn primary" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }} style={{ gap: '8px' }}>
-                  <FileImage size={17} /> Browse Files
-                </button>
-              </div>
+              {preview ? <img src={preview} alt="Selected upload preview" /> : <span className="sg-upload-icon"><UploadCloud size={28} /></span>}
+              <strong>{file ? file.name : 'Drop an image here'}</strong>
+              <p>{file ? `${formatSize(file.size)} · Ready for analysis` : 'or browse your device to choose a file'}</p>
+              <button className="sg-button sg-button-outline" type="button" onClick={() => fileInput.current?.click()}>{file ? <RotateCcw size={16} /> : <FileImage size={16} />}{file ? 'Replace image' : 'Browse files'}</button>
             </div>
-
-            {imageMeta && (
-              <div className="responsive-grid two-cols" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '16px' }}>
-                <MetaCard label="File" value={imageMeta.name} />
-                <MetaCard label="Size" value={imageMeta.size} />
-              </div>
-            )}
-
-            {error && (
-              <div className="alert-error" style={{ marginTop: '16px', padding: '12px', borderRadius: '8px', fontSize: '14px' }}>
-                <AlertCircle size={16} />
-                <span style={{ fontWeight: 600 }}>{error}</span>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '16px' }}>
-              {step === 1 && (
-                <button type="button" onClick={runOcrExtraction} disabled={!file || status === 'extracting'} className="btn primary" style={{ flex: 1, minWidth: '190px', gap: '8px', opacity: !file ? 0.72 : 1 }}>
-                  {status === 'extracting' ? <RefreshCw size={17} className="spin" /> : null}
-                  {status === 'extracting' ? 'Extracting Text...' : 'Next: Extract Text'} <ArrowRight size={17} />
-                </button>
-              )}
-              {step === 2 && (
-                <>
-                  <button type="button" onClick={() => setStep(1)} disabled={status === 'analyzing'} className="btn light" style={{ gap: '8px' }}>
-                    <ArrowLeft size={17} /> Back
-                  </button>
-                  <button type="button" onClick={() => setStep(3)} disabled={!ocrResult} className="btn primary" style={{ flex: 1, minWidth: '210px', gap: '8px' }}>
-                    Next: Preprocessing <ArrowRight size={17} />
-                  </button>
-                </>
-              )}
-              {step === 3 && (
-                <>
-                  <button type="button" onClick={() => setStep(2)} disabled={status === 'analyzing'} className="btn light" style={{ gap: '8px' }}>
-                    <ArrowLeft size={17} /> Back
-                  </button>
-                  <button type="button" onClick={startAnalysis} disabled={!file || status === 'analyzing'} className="btn primary" style={{ flex: 1, minWidth: '210px', gap: '8px', opacity: status === 'analyzing' ? 0.72 : 1 }}>
-                    {status === 'analyzing' ? <RefreshCw size={17} className="spin" /> : <Scan size={17} />}
-                    {status === 'analyzing' ? 'Running Model...' : 'Next: Run Prediction'}
-                  </button>
-                </>
-              )}
-              {step === 4 && (
-                <button type="button" onClick={reset} className="btn primary" style={{ flex: 1, minWidth: '190px', gap: '8px' }}>
-                  Analyze Another Image <UploadCloud size={17} />
-                </button>
-              )}
-            </div>
-          </section>
-
-          <section className="card" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--line)' }}>
-            <h3 style={{ margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <ImageIcon size={20} /> Image Preview
-            </h3>
-            <div style={{ minHeight: '310px', border: '1px solid var(--line)', borderRadius: '14px', background: 'var(--bg)', display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
-              {preview ? (
-                <img src={preview} alt="Upload preview" style={{ width: '100%', maxHeight: '430px', objectFit: 'contain', display: 'block' }} />
-              ) : (
-                <div style={{ color: 'var(--muted)', textAlign: 'center', padding: '30px' }}>
-                  <ImageIcon size={58} style={{ marginBottom: '14px', color: '#6366f1' }} />
-                  <p style={{ margin: 0, fontWeight: 700 }}>No image selected</p>
-                </div>
-              )}
-            </div>
-          </section>
+            {file && <button className="sg-remove-file" type="button" onClick={reset}><X size={15} /> Remove selected image</button>}
+            {error && <Alert type="error">{error}</Alert>}
+            <div className="sg-form-actions"><button className="sg-button sg-button-primary" type="button" onClick={goToStep2} disabled={!file}>Next: Extract text <ArrowRight size={17} /></button></div>
+          </Card>
         </div>
+      )}
 
-        <section className="card" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--line)', minHeight: '720px' }}>
-          <h3 style={{ margin: '0 0 18px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Scan size={20} /> Image Analysis Result
-          </h3>
+      {step === 2 && (
+        <Card title="Step 2 · OCR extraction" description="Text read from your image using EasyOCR.">
+          <OcrPanel apiState={apiState} preview={preview} result={result} error={error} noText={noText} />
+          <div className="sg-form-actions" style={{ marginTop: 18 }}>
+            <button className="sg-button sg-button-outline" type="button" onClick={() => backToStep(1)}><ArrowLeft size={17} /> Back</button>
+            {apiState === 'error' ? (
+              <button className="sg-button sg-button-primary" type="button" onClick={runPrediction}>Try again</button>
+            ) : (
+              <button className="sg-button sg-button-primary" type="button" onClick={goToStep3} disabled={apiState !== 'ready'}>
+                {apiState === 'loading' ? <span className="sg-button-spinner" /> : null}
+                {apiState === 'loading' ? 'Reading image…' : <>Next: Preprocess <ArrowRight size={17} /></>}
+              </button>
+            )}
+          </div>
+        </Card>
+      )}
 
-          {(status === 'extracting' || status === 'analyzing') && (
-            <div style={{ minHeight: '560px', display: 'grid', placeItems: 'center', color: 'var(--muted)', textAlign: 'center' }}>
-              <div>
-                <RefreshCw className="spin" size={46} style={{ marginBottom: '16px', color: '#6366f1' }} />
-                <h3 style={{ margin: '0 0 8px' }}>{status === 'extracting' ? 'Step 2: Extracting text with OCR...' : 'Step 4: Running the trained model...'}</h3>
-                <p style={{ margin: 0 }}>{status === 'extracting' ? 'The OCR module is reading text from the uploaded image.' : 'The trained model is classifying the extracted Somali text.'}</p>
-              </div>
-            </div>
-          )}
+      {step === 3 && (
+        <Card title="Step 3 · Preprocessing" description="This is exactly what changed before the model sees the extracted text.">
+          <PreprocessingDiff original={result?.extracted_text || ''} cleaned={result?.cleaned_text} noText={noText} />
+          <div className="sg-form-actions" style={{ marginTop: 18 }}>
+            <button className="sg-button sg-button-outline" type="button" onClick={() => backToStep(2)}><ArrowLeft size={17} /> Back</button>
+            <button className="sg-button sg-button-primary" type="button" onClick={goToStep4}>Next: View prediction <ArrowRight size={17} /></button>
+          </div>
+        </Card>
+      )}
 
-          {status === 'idle' && step === 1 && !result && (
-            <div style={{ minHeight: '560px', display: 'grid', placeItems: 'center', color: 'var(--muted)', textAlign: 'center' }}>
-              <div>
-                <Scan size={64} style={{ marginBottom: '16px', color: '#6366f1' }} />
-                <h3 style={{ margin: '0 0 8px' }}>Step 1: Upload an image</h3>
-                <p style={{ margin: 0, maxWidth: '430px' }}>Choose the image first, then click Next so the OCR module can extract text.</p>
-              </div>
-            </div>
-          )}
-
-          {status === 'idle' && step === 2 && !result && ocrResult && (
-            <div style={{ display: 'grid', gap: '18px' }}>
-              <ProcessNotice
-                icon={<Scan size={24} />}
-                title="Step 2: OCR extraction completed"
-                text="The OCR module extracted the text from the uploaded image. Click Next to view the preprocessing step."
-              />
-              <div className="responsive-grid two-cols" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <TextBox title="Extracted Text" icon={<FileText size={17} />} value={ocrResult.extracted_text || 'No readable text found'} />
-                <TextBox title="Selected Image" icon={<ImageIcon size={17} />} value={`${imageMeta?.name || 'No image'}\n${imageMeta?.size || '0 MB'}`} />
-              </div>
-              <div style={{ border: '1px solid var(--line)', borderRadius: '12px', overflow: 'hidden' }}>
-                <InfoRow icon={<FileText size={16} />} label="Extracted Words" value={ocrResult.original_stats?.words ?? 0} />
-                <InfoRow icon={<Scan size={16} />} label="OCR Status" value={ocrResult.status === 'ready' ? 'Ready' : ocrResult.status} />
-                <InfoRow icon={<ShieldAlert size={16} />} label="Next Step" value="Preprocessing" />
-              </div>
-            </div>
-          )}
-
-          {status === 'idle' && step === 3 && !result && ocrResult && (
-            <div style={{ display: 'grid', gap: '18px' }}>
-              <ProcessNotice
-                icon={<ListChecks size={24} />}
-                title="Step 3: Preprocessing completed"
-                text="The extracted text has been cleaned and prepared. Click Next to send it to the trained classification model."
-              />
-              <div className="responsive-grid two-cols" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <TextBox title="Extracted Text" icon={<FileText size={17} />} value={ocrResult.extracted_text || 'No readable text found'} />
-                <TextBox title="Preprocessed Text" icon={<Scan size={17} />} value={ocrResult.cleaned_text || 'No cleaned text available'} />
-              </div>
-              <div style={{ border: '1px solid var(--line)', borderRadius: '12px', overflow: 'hidden' }}>
-                <InfoRow icon={<FileText size={16} />} label="Original Words" value={ocrResult.original_stats?.words ?? 0} />
-                <InfoRow icon={<Scan size={16} />} label="Cleaned Words" value={ocrResult.cleaned_stats?.words ?? 0} />
-                <InfoRow icon={<Brain size={16} />} label="Next Step" value="Prediction by trained model" />
-              </div>
-            </div>
-          )}
-
-          {step === 4 && status === 'complete' && result && (
-            <div style={{ display: 'grid', gap: '20px' }}>
-              <div style={{ background: result.soft, border: `1px solid ${result.border}`, borderRadius: '14px', padding: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '18px', marginBottom: '20px', flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                    <div style={{ width: '58px', height: '58px', borderRadius: '50%', background: result.color, color: '#fff', display: 'grid', placeItems: 'center' }}>
-                      {result.neutral ? <Scan size={31} /> : result.prediction === 'OFFENSIVE' ? <ShieldAlert size={31} /> : <CheckCircle2 size={31} />}
-                    </div>
-                    <div>
-                      <h2 style={{ margin: '0 0 4px', color: result.color, fontSize: '26px' }}>{result.prediction}</h2>
-                      <p style={{ margin: 0, color: 'var(--text)', fontWeight: 600 }}>
-                        {result.noText
-                          ? 'No readable text was found in this image.'
-                          : result.tooMuchText
-                            ? 'The image contains a large block of text, so it was not classified.'
-                          : result.noSomaliText
-                            ? 'Text was found, but this result needs review before classification.'
-                          : result.needsReview
-                            ? 'The image text needs review because the result is uncertain.'
-                            : result.prediction === 'OFFENSIVE'
-                              ? 'The image text is classified as offensive.'
-                              : 'The image text is classified as non-offensive.'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {result.neutral && (
-                <div style={{ border: '1px solid rgba(100, 116, 139, 0.2)', background: 'rgba(100, 116, 139, 0.08)', color: 'var(--text)', borderRadius: '12px', padding: '16px', lineHeight: 1.6 }}>
-                  <strong>Try another image:</strong> {result.noSomaliText
-                    ? 'crop closer to the exact text area, or use Analyze Text for typed Somali text.'
-                    : result.tooMuchText
-                      ? 'crop the image to only the sentence you want to classify, or paste the text into Analyze Text.'
-                    : 'use a clearer screenshot, crop closer to the text area, or upload a higher-resolution image.'}
-                </div>
-              )}
-
-              <div className="responsive-grid two-cols" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                <MetaCard label="Words Found" value={textStats.words} />
-                <MetaCard label="Characters" value={textStats.characters} />
-              </div>
-
-              <div className="responsive-grid two-cols" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <TextBox title="Extracted Text" icon={<FileText size={17} />} value={result.text || 'No readable text found'} />
-                <TextBox title="Cleaned Text" icon={<Scan size={17} />} value={result.cleanedText || 'No cleaned text available'} />
-              </div>
-
-              <div style={{ border: '1px solid var(--line)', borderRadius: '12px', overflow: 'hidden' }}>
-                <InfoRow icon={<ShieldAlert size={16} />} label="Label" value={result.prediction} color={result.color} />
-                <InfoRow icon={<Sparkles size={16} />} label="Saved" value={result.historyId ? 'Yes' : 'No'} />
-                <InfoRow icon={<Clock size={16} />} label="Processed At" value={result.date} />
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <button type="button" onClick={copyText} className="btn light" style={{ flex: 1, minWidth: '150px', gap: '8px', color: copyStatus === 'copied' ? '#10b981' : copyStatus === 'failed' || copyStatus === 'empty' ? '#ef4444' : undefined }}>
-                  {copyStatus === 'copied' ? <Check size={17} /> : <Copy size={17} />}
-                  {copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy Failed' : copyStatus === 'empty' ? 'No Text' : 'Copy Text'}
-                </button>
-                <button type="button" onClick={downloadReport} className="btn light" style={{ flex: 1, minWidth: '170px', gap: '8px' }}>
-                  <Download size={17} /> Download Report
-                </button>
-                <button type="button" onClick={() => navigate('/history')} className="btn light" style={{ flex: 1, minWidth: '150px', gap: '8px' }}>
-                  <Clock size={17} /> View History
-                </button>
-              </div>
-            </div>
-          )}
-        </section>
-      </section>
-
-      <style>{`
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        .spin { animation: spin 1s linear infinite; }
-      `}</style>
+      {step === 4 && result && prediction && (
+        <ImageResult
+          result={result}
+          prediction={prediction}
+          preview={preview}
+          noText={noText}
+          copyStatus={copyStatus}
+          onCopy={copyText}
+          onDownload={download}
+          onBack={() => backToStep(3)}
+          onReset={reset}
+        />
+      )}
     </main>
   );
 };
 
-const MetaCard = ({ label, value }) => (
-  <div style={{ border: '1px solid var(--line)', background: 'var(--bg)', borderRadius: '10px', padding: '12px', minWidth: 0 }}>
-    <div style={{ color: 'var(--muted)', fontSize: '12px', fontWeight: 800, marginBottom: '4px' }}>{label}</div>
-    <div style={{ color: 'var(--text)', fontSize: '15px', fontWeight: 900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
-  </div>
-);
-
-const StepProgress = ({ current, steps }) => (
-  <section className="card" style={{ padding: '18px', borderRadius: '16px', border: '1px solid var(--line)', marginBottom: '22px' }}>
-    <div className="responsive-grid three-cols" style={{ display: 'grid', gridTemplateColumns: `repeat(${steps.length}, 1fr)`, gap: '12px' }}>
-      {steps.map((item, index) => {
-        const number = index + 1;
-        const active = current === number;
-        const done = current > number;
-        return (
+const AnalysisSteps = ({ currentStep, onStepClick }) => (
+  <div className="sg-steps" role="list" aria-label="Analysis pipeline steps">
+    {STEP_DEFS.map((step, index) => {
+      const stepNumber = index + 1;
+      const status = stepNumber < currentStep ? 'complete' : stepNumber === currentStep ? 'active' : 'pending';
+      const clickable = status === 'complete';
+      return (
+        <div className="sg-steps-item" key={step.key}>
           <div
-            key={item.title}
-            style={{
-              border: `1px solid ${active ? '#6366f1' : done ? 'rgba(16, 185, 129, 0.35)' : 'var(--line)'}`,
-              background: active ? 'rgba(99, 102, 241, 0.08)' : done ? 'rgba(16, 185, 129, 0.08)' : 'var(--bg)',
-              borderRadius: '14px',
-              padding: '14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-            }}
+            className={`sg-step ${status} ${clickable ? 'clickable' : ''}`}
+            role={clickable ? 'button' : 'listitem'}
+            tabIndex={clickable ? 0 : undefined}
+            onClick={clickable ? () => onStepClick(stepNumber) : undefined}
+            onKeyDown={clickable ? (event) => { if (event.key === 'Enter') onStepClick(stepNumber); } : undefined}
           >
-            <span style={{ width: '36px', height: '36px', borderRadius: '50%', display: 'grid', placeItems: 'center', background: done ? '#10b981' : active ? '#6366f1' : 'var(--card)', color: done || active ? '#fff' : 'var(--muted)', fontWeight: 900 }}>
-              {done ? <Check size={18} /> : number}
-            </span>
-            <div>
-              <strong style={{ display: 'block', color: active ? '#6366f1' : 'var(--text)' }}>{item.title}</strong>
-              <small style={{ color: 'var(--muted)', fontWeight: 700 }}>{item.text}</small>
-            </div>
+            <span className="sg-step-badge">{status === 'complete' ? <Check size={18} /> : stepNumber}</span>
+            <span className="sg-step-copy"><strong>{step.label}</strong><small>{step.description}</small></span>
           </div>
-        );
-      })}
-    </div>
-  </section>
-);
-
-const ProcessNotice = ({ icon, title, text }) => (
-  <div style={{ border: '1px solid rgba(99, 102, 241, 0.2)', background: 'rgba(99, 102, 241, 0.08)', borderRadius: '14px', padding: '18px', display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
-    <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', flex: '0 0 auto' }}>
-      {icon}
-    </div>
-    <div>
-      <h3 style={{ margin: '0 0 6px' }}>{title}</h3>
-      <p style={{ margin: 0, color: 'var(--muted)', lineHeight: 1.6, fontWeight: 600 }}>{text}</p>
-    </div>
+          {index < STEP_DEFS.length - 1 && <span className={`sg-step-connector ${stepNumber < currentStep ? 'filled' : ''}`} />}
+        </div>
+      );
+    })}
   </div>
 );
 
-const TextBox = ({ icon, title, value }) => (
-  <div style={{ border: '1px solid var(--line)', borderRadius: '12px', padding: '16px', background: 'var(--bg)', minHeight: '150px' }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--muted)', fontSize: '13px', fontWeight: 800, marginBottom: '10px' }}>
-      {icon}
-      <span>{title}</span>
+const OcrPanel = ({ apiState, preview, result, error, noText }) => (
+  <div className="sg-diff-panel" style={{ marginTop: 0, borderTop: 0, paddingTop: 0 }}>
+    <div className="sg-diff-panel-header">
+      <span>Extracted OCR text</span>
+      {apiState === 'loading' && <span className="sg-diff-status"><LoaderCircle size={13} className="sg-spin" /> Reading image…</span>}
     </div>
-    <p style={{ margin: 0, color: 'var(--text)', lineHeight: 1.65, fontWeight: 600, whiteSpace: 'pre-wrap' }}>{value}</p>
+    {preview && <img className="sg-result-image" src={preview} alt="Uploaded" style={{ marginBottom: 14 }} />}
+    {apiState === 'loading' && <p className="sg-diff-original">Running OCR on your image…</p>}
+    {apiState === 'error' && <Alert type="error">{error || 'Text extraction failed.'}</Alert>}
+    {apiState === 'ready' && (noText
+      ? <Alert type="error">No readable Somali text was detected. Try a clearer image or crop closer to the text.</Alert>
+      : <p className="sg-diff-original" style={{ color: 'var(--sg-text)' }}>{result?.extracted_text}</p>)}
   </div>
 );
 
-const InfoRow = ({ icon, label, value, color }) => (
-  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', padding: '15px 18px', borderBottom: '1px solid var(--line)', background: 'var(--bg)' }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--muted)', fontSize: '14px', fontWeight: 700 }}>
-      {icon}
-      <span>{label}</span>
+const PreprocessingDiff = ({ original, cleaned, noText }) => {
+  const cleanedReady = cleaned !== undefined && cleaned !== null;
+  const changed = cleanedReady && cleaned.trim() && cleaned.trim() !== original.trim();
+
+  return (
+    <div className="sg-diff-panel" style={{ marginTop: 0, borderTop: 0, paddingTop: 0 }}>
+      <div className="sg-diff-panel-header"><span>Preprocessing result</span></div>
+      {noText || !cleanedReady ? (
+        <p className="sg-diff-unchanged">No extracted text was available to preprocess.</p>
+      ) : changed ? (
+        <>
+          <DiffText before={original} after={cleaned} />
+          <div className="sg-diff-legend">
+            <span className="removed"><i /> Removed during preprocessing</span>
+            <span className="added"><i /> Kept or normalized</span>
+          </div>
+        </>
+      ) : (
+        <p className="sg-diff-unchanged">No changes were needed — the extracted text was already clean.</p>
+      )}
     </div>
-    <span style={{ color: color || 'var(--text)', fontWeight: 900, textAlign: 'right' }}>{value}</span>
-  </div>
+  );
+};
+
+const DiffText = ({ before, after }) => {
+  const segments = useMemo(() => diffWords(before, after), [before, after]);
+  return (
+    <p className="sg-diff-text">
+      {segments.map((segment, index) => (
+        <span key={`${segment.type}-${index}`} className={`sg-diff-${segment.type}`}>{segment.text}</span>
+      ))}
+    </p>
+  );
+};
+
+const ImageResult = ({ result, prediction, preview, noText, copyStatus, onCopy, onDownload, onBack, onReset }) => (
+  <Card className="sg-result-card" title="Step 4 · Model prediction" description={result.history_id ? 'Prediction saved to your history.' : 'The processing result is shown below.'}>
+    {preview && <img className="sg-result-image" src={preview} alt="Analyzed upload" />}
+    {noText ? <Alert type="error">No readable Somali text was detected. Try a clearer image or crop closer to the text.</Alert> : <div className={`sg-result-summary ${prediction.tone}`}><span className="sg-result-icon">{prediction.offensive ? <ShieldAlert size={26} /> : <CheckCircle2 size={26} />}</span><div><span>Model classification</span><strong>{prediction.label}</strong></div><div className="sg-confidence"><span>Model confidence</span><strong>{formatConfidence(result.confidence)}</strong></div></div>}
+    {!noText && <div className="sg-result-note">Model confidence is calculated dynamically from this SomBERTa prediction. OCR extraction confidence, when used internally, is separate from model confidence.</div>}
+    <StatusLine label="OCR processing" value={noText ? 'No readable text' : 'Text extracted'} tone={noText ? 'warning' : 'success'} />
+    <StatusLine label="Prediction processing" value={noText ? 'Not classified' : 'Complete'} tone={noText ? 'warning' : 'success'} />
+    {result.extracted_text && <TextBlock title="Extracted OCR text" value={result.extracted_text} />}
+    {result.cleaned_text && <TextBlock title="Preprocessed text" value={result.cleaned_text} />}
+    <div className="sg-form-actions">
+      <button className="sg-button sg-button-outline" type="button" onClick={onBack}><ArrowLeft size={17} /> Back</button>
+      <button className="sg-button sg-button-outline" type="button" onClick={onCopy} disabled={!result.extracted_text}>{copyStatus === 'copied' ? <Check size={16} /> : <Copy size={16} />}{copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy extracted text'}</button>
+      <button className="sg-button sg-button-outline" type="button" onClick={onDownload}><Download size={16} /> Download report</button>
+      <button className="sg-button sg-button-primary" type="button" onClick={onReset}><RotateCcw size={16} /> Analyze another image</button>
+      <Link className="sg-button sg-button-ghost" to="/history">View history</Link>
+    </div>
+  </Card>
 );
+
+const StatusLine = ({ label, value, tone }) => <div className="sg-status-line"><span>{label}</span><strong className={tone}>{tone === 'success' && <CheckCircle2 size={14} />}{value}</strong></div>;
+const TextBlock = ({ title, value }) => <section className="sg-result-text"><h3>{title}</h3><p>{value}</p></section>;
+const formatSize = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+const formatConfidence = (value) => { const number = Number(value); return value !== null && value !== '' && Number.isFinite(number) ? `${(number * 100).toFixed(2)}%` : 'Not available'; };
+const normalizeResult = (result) => { if (!result) return null; const value = String(result.prediction || '').toLowerCase(); const offensive = value.includes('offensive') && !value.includes('non'); const safe = value.includes('non'); return { offensive, label: offensive ? 'Offensive' : safe ? 'Non-offensive' : 'Unclassified', tone: offensive ? 'offensive' : safe ? 'safe' : 'unknown' }; };
 
 export default Analyze;

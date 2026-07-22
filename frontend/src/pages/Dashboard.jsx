@@ -1,32 +1,27 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bar, Doughnut } from 'react-chartjs-2';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
 import {
   Activity,
-  AlertTriangle,
-  BarChart2,
   Brain,
   CheckCircle2,
   ChevronRight,
   Clock,
   Cloud,
-  Cpu,
   Database,
+  Download,
   FileText,
   Image as ImageIcon,
   RefreshCw,
   ShieldAlert,
   Sparkles,
-  TrendingUp,
   Type,
-  UserCheck,
-  UserCog,
-  Users,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getAdminDashboard, getHealth } from '../services/api';
 import { useThemeMode } from '../hooks/useThemeMode';
-import { formatDateTime, formatPredictionLabel, isOffensivePrediction, isReviewPrediction, rowText } from '../utils/predictions';
+import { formatDateTime, formatPredictionLabel, isNonOffensivePrediction, isOffensivePrediction, isUnclassifiedPrediction, rowText } from '../utils/predictions';
+import { Alert, Card, IconChip, SectionHeading, StatCard } from '../components/ui/Primitives';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
@@ -66,7 +61,6 @@ const percent = (value) => `${(value * 100).toFixed(2)}%`;
 
 const Dashboard = () => {
   const [history, setHistory] = useState([]);
-  const [users, setUsers] = useState([]);
   const [summary, setSummary] = useState({});
   const [apiOnline, setApiOnline] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -74,8 +68,8 @@ const Dashboard = () => {
   const [lastUpdated, setLastUpdated] = useState(null);
   const { isDark } = useThemeMode();
 
-  const textColor = isDark ? '#cbd5e1' : '#64748b';
-  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.08)';
+  const textColor = isDark ? '#94a3b8' : '#64748b';
+  const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
 
   const loadDashboard = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -83,7 +77,6 @@ const Dashboard = () => {
       const [health, dashboardData] = await Promise.all([getHealth(), getAdminDashboard()]);
       setApiOnline(Boolean(health?.message));
       setHistory(dashboardData.history || []);
-      setUsers(dashboardData.users || []);
       setSummary(dashboardData || {});
       setLastUpdated(new Date());
       setError('');
@@ -96,6 +89,8 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
+    // Initial API synchronization is intentionally triggered when the dashboard mounts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDashboard();
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -109,11 +104,8 @@ const Dashboard = () => {
   const stats = useMemo(() => {
     const total = history.length;
     const offensiveRows = history.filter((row) => isOffensivePrediction(row.prediction));
-    const neutralRows = history.filter((row) => isReviewPrediction(row.prediction));
-    const nonOffensiveRows = history.filter((row) => {
-      const value = String(row.prediction || '').toLowerCase();
-      return value.includes('non') && !neutralRows.includes(row);
-    });
+    const nonOffensiveRows = history.filter((row) => isNonOffensivePrediction(row.prediction));
+    const classifiedTotal = offensiveRows.length + nonOffensiveRows.length;
     const imageRows = history.filter((row) => row.input_type === 'image');
     const textRows = history.filter((row) => row.input_type === 'text');
     const todayKey = new Date().toISOString().slice(0, 10);
@@ -122,30 +114,18 @@ const Dashboard = () => {
       total,
       offensive: offensiveRows.length,
       nonOffensive: nonOffensiveRows.length,
-      neutral: neutralRows.length,
       image: imageRows.length,
       text: textRows.length,
       today: todayRows.length,
-      offensivePercent: total ? Math.round((offensiveRows.length / total) * 100) : 0,
-      nonOffensivePercent: total ? Math.round((nonOffensiveRows.length / total) * 100) : 0,
-      neutralPercent: total ? Math.round((neutralRows.length / total) * 100) : 0,
+      offensivePercent: classifiedTotal ? Math.round((offensiveRows.length / classifiedTotal) * 100) : 0,
+      nonOffensivePercent: classifiedTotal ? Math.round((nonOffensiveRows.length / classifiedTotal) * 100) : 0,
     };
   }, [history]);
-
-  const userStats = useMemo(() => {
-    const total = summary.users_count ?? users.length;
-    const active = summary.active_users_count ?? users.filter((user) => user.is_active).length;
-    const inactive = summary.inactive_users_count ?? Math.max(total - active, 0);
-    const admins = summary.admin_users_count ?? users.filter((user) => user.role === 'admin').length;
-    const regular = summary.regular_users_count ?? Math.max(total - admins, 0);
-    return { total, active, inactive, admins, regular };
-  }, [summary, users]);
 
   const dailyData = useMemo(() => {
     const labels = [];
     const offensive = [];
     const safe = [];
-    const neutral = [];
 
     for (let i = 6; i >= 0; i -= 1) {
       const date = new Date();
@@ -153,21 +133,19 @@ const Dashboard = () => {
       const key = date.toISOString().slice(0, 10);
       const rows = history.filter((row) => String(row.created_at || '').slice(0, 10) === key);
       const offensiveRows = rows.filter((row) => isOffensivePrediction(row.prediction));
-      const neutralRows = rows.filter((row) => isReviewPrediction(row.prediction));
       labels.push(date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
       offensive.push(offensiveRows.length);
-      neutral.push(neutralRows.length);
-      safe.push(Math.max(rows.length - offensiveRows.length - neutralRows.length, 0));
+      safe.push(rows.filter((row) => isNonOffensivePrediction(row.prediction)).length);
     }
 
-    return { labels, offensive, safe, neutral };
+    return { labels, offensive, safe };
   }, [history]);
 
   const distributionData = {
-    labels: ['Offensive', 'Non-Offensive', 'Needs Review'],
+    labels: ['Offensive', 'Non-Offensive'],
     datasets: [{
-      data: [stats.offensive, stats.nonOffensive, stats.neutral],
-      backgroundColor: ['#ef4444', '#10b981', '#64748b'],
+      data: [stats.offensive, stats.nonOffensive],
+      backgroundColor: ['#dc2626', '#059669'],
       borderWidth: 0,
       hoverOffset: 5,
       cutout: '72%',
@@ -177,9 +155,8 @@ const Dashboard = () => {
   const dailyChartData = {
     labels: dailyData.labels,
     datasets: [
-      { label: 'Offensive', data: dailyData.offensive, backgroundColor: '#ef4444', borderRadius: 4 },
-      { label: 'Non-Offensive', data: dailyData.safe, backgroundColor: '#10b981', borderRadius: 4 },
-      { label: 'Needs Review', data: dailyData.neutral, backgroundColor: '#64748b', borderRadius: 4 },
+      { label: 'Offensive', data: dailyData.offensive, backgroundColor: '#dc2626', borderRadius: 4 },
+      { label: 'Non-Offensive', data: dailyData.safe, backgroundColor: '#059669', borderRadius: 4 },
     ],
   };
 
@@ -188,8 +165,8 @@ const Dashboard = () => {
     plugins: {
       legend: { labels: { color: textColor, boxWidth: 10, usePointStyle: true } },
       tooltip: {
-        backgroundColor: isDark ? '#0f172a' : '#fff',
-        titleColor: isDark ? '#f8fafc' : '#0f172a',
+        backgroundColor: isDark ? '#121a2e' : '#fff',
+        titleColor: isDark ? '#f1f5f9' : '#0f1424',
         bodyColor: textColor,
         borderColor: gridColor,
         borderWidth: 1,
@@ -213,6 +190,41 @@ const Dashboard = () => {
   const recentPredictions = sortedHistory.slice(0, 6);
   const riskyPredictions = sortedHistory.filter((row) => isOffensivePrediction(row.prediction)).slice(0, 5);
   const bestModel = MODEL_RESULTS.reduce((best, model) => (model.f1 > best.f1 ? model : best), MODEL_RESULTS[0]);
+  const exportableHistory = useMemo(() => history.filter((row) => (
+    (isOffensivePrediction(row.prediction) || isNonOffensivePrediction(row.prediction))
+    && String(row.cleaned_text || row.extracted_text || row.original_text || '').trim()
+  )), [history]);
+
+  const downloadDataset = () => {
+    if (!exportableHistory.length) return;
+
+    const rows = [
+      ['record_id', 'input_type', 'source_text', 'cleaned_text', 'label', 'label_id', 'confidence', 'model_name', 'created_at', 'label_source'],
+      ...exportableHistory.map((row) => {
+        const offensive = isOffensivePrediction(row.prediction);
+        return [
+          row.id,
+          row.input_type || 'text',
+          row.extracted_text || row.original_text || row.cleaned_text || '',
+          row.cleaned_text || '',
+          offensive ? 'offensive' : 'non-offensive',
+          offensive ? 1 : 0,
+          row.confidence ?? '',
+          row.model_name || 'SomBERTa',
+          row.created_at || '',
+          'SomBERTa prediction - human verification required',
+        ];
+      }),
+    ];
+    const csv = rows.map((row) => row.map(toCsvCell).join(',')).join('\n');
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `somaliguard-admin-dataset-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   const modelPerformanceData = {
     labels: MODEL_RESULTS.map((item) => item.model),
@@ -220,13 +232,13 @@ const Dashboard = () => {
       {
         label: 'Accuracy',
         data: MODEL_RESULTS.map((item) => Number((item.accuracy * 100).toFixed(2))),
-        backgroundColor: '#2563eb',
+        backgroundColor: '#4f46e5',
         borderRadius: 8,
       },
       {
         label: 'F1-score',
         data: MODEL_RESULTS.map((item) => Number((item.f1 * 100).toFixed(2))),
-        backgroundColor: '#0f766e',
+        backgroundColor: '#0d9488',
         borderRadius: 8,
       },
     ],
@@ -237,8 +249,8 @@ const Dashboard = () => {
     plugins: {
       legend: { labels: { color: textColor, boxWidth: 10, usePointStyle: true } },
       tooltip: {
-        backgroundColor: isDark ? '#0f172a' : '#fff',
-        titleColor: isDark ? '#f8fafc' : '#0f172a',
+        backgroundColor: isDark ? '#121a2e' : '#fff',
+        titleColor: isDark ? '#f1f5f9' : '#0f1424',
         bodyColor: textColor,
         borderColor: gridColor,
         borderWidth: 1,
@@ -260,139 +272,138 @@ const Dashboard = () => {
   };
 
   return (
-    <main className="page dashboard-page" style={{ padding: '30px', maxWidth: '1540px', margin: '0 auto' }}>
-      <section className="dashboard-hero">
-        <div>
-          <span className="eyebrow"><Sparkles size={15} /> Academic Monitoring Dashboard</span>
-          <h1>SomaliGuard AI Research Dashboard</h1>
+    <main className="page sg-dashboard-page">
+      <section className="sg-hero">
+        <div className="sg-hero-copy">
+          <span className="sg-eyebrow"><Sparkles size={14} /> Administrative Research Monitoring</span>
+          <h1>Research Administration Dashboard</h1>
           <p>Review the research evidence, model performance, prediction records, and system activity for the Somali offensive language detection system.</p>
         </div>
-        <div className="dashboard-actions">
-          <a href="#review-queue" className="dash-action primary-action"><ShieldAlert size={17} /> Review Queue</a>
-          <Link to="/history" className="dash-action"><Clock size={17} /> View History</Link>
-          <button onClick={() => loadDashboard()} className="dash-refresh" aria-label="Refresh dashboard" disabled={loading}>
-            <RefreshCw size={18} className={loading ? 'spin' : ''} />
+        <div className="sg-hero-actions">
+          <a href="#review-queue" className="sg-button sg-button-primary"><ShieldAlert size={16} /> Offensive Records</a>
+          <button type="button" onClick={downloadDataset} disabled={!exportableHistory.length} className="sg-button sg-button-outline">
+            <Download size={16} /> Export Dataset ({exportableHistory.length})
+          </button>
+          <Link to="/history" className="sg-button sg-button-outline"><Clock size={16} /> View History</Link>
+          <button type="button" onClick={() => loadDashboard()} className="sg-icon-button" aria-label="Refresh dashboard" disabled={loading} style={{ background: 'rgba(255,255,255,.14)', borderColor: 'rgba(255,255,255,.3)', color: '#fff' }}>
+            <RefreshCw size={18} className={loading ? 'sg-spin' : ''} />
           </button>
         </div>
       </section>
 
-      {error && <div className="alert-error" style={{ marginBottom: '20px', padding: '12px', borderRadius: '8px' }}>{error}</div>}
+      {error && <Alert type="error">{error}</Alert>}
 
-      <section className="dashboard-research-overview">
-        <AcademicOverviewCard
-          icon={<FileText size={22} />}
+      <Alert type="warning">
+        <strong>Admin dataset export.</strong>{' '}
+        Export valid offensive and non-offensive records from all users without account details. SomBERTa-generated labels must be reviewed by a human before model retraining.
+      </Alert>
+
+      <section className="sg-grid-3" style={{ margin: '20px 0' }}>
+        <OverviewCard
+          icon={FileText}
+          tone="blue"
           title="Research Scope"
           text="The system evaluates Somali text entered directly by users or extracted from uploaded images."
           detail={`${stats.total} saved analysis records`}
-          color="#2563eb"
         />
-        <AcademicOverviewCard
-          icon={<Brain size={22} />}
+        <OverviewCard
+          icon={Brain}
+          tone="teal"
           title="AI Processing"
           text="Each request passes through preparation before the trained model produces the final classification."
           detail={`${stats.text} text checks, ${stats.image} image checks`}
-          color="#0f766e"
         />
-        <AcademicOverviewCard
-          icon={<Database size={22} />}
+        <OverviewCard
+          icon={Database}
+          tone="violet"
           title="Research Evidence"
           text="Predictions are stored in MySQL to support review, reporting, and project evaluation."
-          detail={`${userStats.total} registered users`}
-          color="#7c3aed"
+          detail={`${stats.total} stored prediction records`}
         />
       </section>
 
-      <section className="metric-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '18px', marginBottom: '20px' }}>
-        <MetricCard icon={<Database size={25} />} color="#6366f1" title="Total Records" value={stats.total} subtitle={`${stats.text} text, ${stats.image} image`} />
-        <MetricCard icon={<Users size={25} />} color="#0ea5e9" title="Users" value={userStats.total} subtitle={`${userStats.active} active, ${userStats.admins} admins`} />
-        <MetricCard icon={<ShieldAlert size={25} />} color="#ef4444" title="Offensive" value={stats.offensive} subtitle={`${stats.offensivePercent}% of predictions`} />
-        <MetricCard icon={<CheckCircle2 size={25} />} color="#10b981" title="Non-Offensive" value={stats.nonOffensive} subtitle={`${stats.nonOffensivePercent}% of predictions`} />
+      <section className="sg-grid-3" style={{ marginBottom: 20 }}>
+        <StatCard icon={Database} tone="violet" label="Total Records" value={stats.total} hint={`${stats.text} text, ${stats.image} image`} />
+        <StatCard icon={ShieldAlert} tone="red" label="Offensive" value={stats.offensive} hint={`${stats.offensivePercent}% of predictions`} />
+        <StatCard icon={CheckCircle2} tone="teal" label="Non-Offensive" value={stats.nonOffensive} hint={`${stats.nonOffensivePercent}% of predictions`} />
       </section>
 
-      <SectionIntro
-        title="Model Evaluation Evidence"
-        text="This section presents the comparative performance of the trained models used during the research phase."
-      />
-      <section className="model-evaluation-grid">
-        <Panel title="Model Performance Evaluation" icon={<Brain size={18} />}>
-          <div style={{ display: 'grid', gap: '18px' }}>
-            <div className="model-summary-banner">
+      <SectionHeading eyebrow="Research section" title="Model Evaluation Evidence" description="This section presents the comparative performance of the trained models used during the research phase." />
+      <section className="sg-grid-2" style={{ marginBottom: 20 }}>
+        <Card title="Model Performance Evaluation">
+          <div style={{ display: 'grid', gap: 18 }}>
+            <div className="sg-highlight-banner">
               <div>
-                <span>Best model by F1-score</span>
-                <h2>{bestModel.model}</h2>
+                <span className="sg-highlight-label">Best model by F1-score</span>
+                <h3>{bestModel.model}</h3>
                 <p>{bestModel.type} model with {percent(bestModel.accuracy)} accuracy and {percent(bestModel.f1)} F1-score.</p>
               </div>
-              <div className="model-score-pill">{percent(bestModel.f1)}</div>
+              <div className="sg-highlight-pill">{percent(bestModel.f1)}</div>
             </div>
-            <div style={{ height: '310px' }}>
+            <div className="sg-chart-wrap" style={{ height: 300 }}>
               <Bar data={modelPerformanceData} options={modelPerformanceOptions} />
             </div>
           </div>
-        </Panel>
+        </Card>
 
-        <Panel title="Trained Model Ranking" icon={<BarChart2 size={18} />}>
+        <Card title="Trained Model Ranking">
           <ModelRankingTable results={MODEL_RESULTS} />
-        </Panel>
+        </Card>
       </section>
 
-      <section className="academic-chart-gallery">
+      <section className="sg-chart-gallery" style={{ marginBottom: 20 }}>
         {ACADEMIC_CHARTS.map((chart) => (
-          <ResearchChartCard key={chart.src} chart={chart} />
+          <figure key={chart.src}>
+            <img src={chart.src} alt={chart.title} loading="lazy" />
+            <figcaption><strong style={{ display: 'block', color: 'var(--sg-text)', marginBottom: 4 }}>{chart.title}</strong>{chart.text}</figcaption>
+          </figure>
         ))}
       </section>
 
-      <SectionIntro
-        title="System Monitoring"
-        text="This section summarizes prediction distribution, recent system activity, and the current backend service state."
-      />
-      <section className="dashboard-overview-grid" style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.8fr 1fr', gap: '20px', marginBottom: '20px' }}>
-        <Panel title="Prediction Labels" icon={<BarChart2 size={18} />}>
-          <div className="responsive-grid dashboard-label-grid" style={{ display: 'grid', gridTemplateColumns: '170px 1fr', gap: '20px', alignItems: 'center' }}>
-            <div style={{ width: '170px', height: '170px' }}>
-              {stats.total ? <Doughnut data={distributionData} options={{ maintainAspectRatio: false, plugins: { legend: { display: false } } }} /> : <EmptyState text="No labels yet" />}
+      <SectionHeading eyebrow="Research section" title="System Monitoring" description="This section summarizes prediction distribution, recent system activity, and the current backend service state." />
+      <section className="sg-grid-3" style={{ marginBottom: 20 }}>
+        <Card title="Prediction Labels">
+          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 18, alignItems: 'center' }}>
+            <div style={{ width: 140, height: 140 }}>
+              {stats.total ? <Doughnut data={distributionData} options={{ maintainAspectRatio: false, plugins: { legend: { display: false } } }} /> : <div className="sg-state"><p>No labels yet</p></div>}
             </div>
-            <div style={{ display: 'grid', gap: '13px' }}>
-              <LegendRow color="#ef4444" label="Offensive" value={`${stats.offensive} (${stats.offensivePercent}%)`} />
-              <LegendRow color="#10b981" label="Non-Offensive" value={`${stats.nonOffensive} (${stats.nonOffensivePercent}%)`} />
-              <LegendRow color="#64748b" label="Needs Review" value={`${stats.neutral} (${stats.neutralPercent}%)`} />
+            <div className="sg-chart-legend" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+              <span style={{ color: '#dc2626' }}><i /> Offensive — {stats.offensive} ({stats.offensivePercent}%)</span>
+              <span style={{ color: '#059669' }}><i /> Non-Offensive — {stats.nonOffensive} ({stats.nonOffensivePercent}%)</span>
             </div>
           </div>
-        </Panel>
+        </Card>
 
-        <Panel title="Last 7 Days Activity" icon={<TrendingUp size={18} />}>
-          <div style={{ height: '250px' }}>
+        <Card title="Last 7 Days Activity">
+          <div className="sg-chart-wrap compact">
             <Bar data={dailyChartData} options={barOptions} />
           </div>
-        </Panel>
+        </Card>
 
-        <Panel title="System Health" icon={<Cpu size={18} />}>
-          <div style={{ display: 'grid', gap: '12px' }}>
-            <HealthRow icon={<Cloud size={17} />} label="Service" value={apiOnline ? 'Online' : 'Offline'} color={apiOnline ? '#10b981' : '#ef4444'} />
-            <HealthRow icon={<Database size={17} />} label="Storage" value={summary.database_status || (error ? 'Check connection' : 'Connected')} color={error ? '#ef4444' : '#10b981'} />
-            <HealthRow icon={<Brain size={17} />} label="AI Review" value={summary.model_name ? 'Ready' : 'Ready'} color="#6366f1" />
-            <HealthRow icon={<Activity size={17} />} label="Today" value={`${stats.today} checks`} color="#0ea5e9" />
+        <Card title="System Health">
+          <div className="sg-info-list">
+            <div className="sg-info-item"><span><Cloud size={15} style={{ verticalAlign: -3, marginRight: 6 }} />Service</span><span className={apiOnline ? 'sg-text-positive' : 'sg-text-negative'}>{apiOnline ? 'Online' : 'Offline'}</span></div>
+            <div className="sg-info-item"><span><Database size={15} style={{ verticalAlign: -3, marginRight: 6 }} />Storage</span><span className={error ? 'sg-text-negative' : 'sg-text-positive'}>{summary.database_status || (error ? 'Check connection' : 'Connected')}</span></div>
+            <div className="sg-info-item"><span><Brain size={15} style={{ verticalAlign: -3, marginRight: 6 }} />AI Review</span><span>Ready</span></div>
+            <div className="sg-info-item"><span><Activity size={15} style={{ verticalAlign: -3, marginRight: 6 }} />Today</span><span>{stats.today} checks</span></div>
           </div>
-        </Panel>
+        </Card>
       </section>
 
-      <SectionIntro
-        title="Review Records"
-        text="Recent predictions and flagged content are shown here for academic review and moderation follow-up."
-      />
-      <section className="dashboard-main-grid" style={{ display: 'grid', gridTemplateColumns: '1.45fr 1fr', gap: '20px', marginBottom: '20px' }}>
-        <Panel
+      <SectionHeading eyebrow="Research section" title="Review Records" description="Recent predictions and flagged content are shown here for academic review and moderation follow-up." />
+      <section className="sg-grid-split">
+        <Card
           title="Recent Prediction History"
-          icon={<Clock size={18} />}
           action={<RecentHistoryAction lastUpdated={lastUpdated} loading={loading} onRefresh={() => loadDashboard()} />}
         >
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '720px' }}>
+          <div className="sg-table-wrap">
+            <table className="sg-table">
               <thead>
                 <tr>
-                  <th style={th}>Type</th>
-                  <th style={th}>Text</th>
-                  <th style={{ ...th, textAlign: 'center' }}>Label</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Time</th>
+                  <th>Type</th>
+                  <th>Text</th>
+                  <th style={{ textAlign: 'center' }}>Label</th>
+                  <th style={{ textAlign: 'right' }}>Time</th>
                 </tr>
               </thead>
               <tbody>
@@ -400,272 +411,116 @@ const Dashboard = () => {
                   <PredictionRow key={item.id} item={item} />
                 ))}
                 {!recentPredictions.length && (
-                  <tr><td colSpan="4" style={{ padding: '22px', textAlign: 'center', color: 'var(--muted)' }}>No prediction history yet.</td></tr>
+                  <tr><td colSpan="4" style={{ padding: 22, textAlign: 'center', color: 'var(--sg-text-muted)' }}>No prediction history yet.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
-        </Panel>
+        </Card>
 
-        <Panel title="High Risk Queue" icon={<ShieldAlert size={18} />} action={<Link to="/history">Review <ChevronRight size={14} /></Link>}>
+        <Card title="High Risk Queue" action={<Link to="/history" className="sg-button sg-button-ghost">Review <ChevronRight size={14} /></Link>}>
           <div id="review-queue" />
-          <div style={{ display: 'grid', gap: '12px' }}>
+          <div className="sg-record-list">
             {riskyPredictions.map((item) => (
-              <div key={item.id} style={{ border: '1px solid rgba(239, 68, 68, 0.2)', background: 'rgba(239, 68, 68, 0.06)', borderRadius: '12px', padding: '14px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '8px' }}>
-                  <strong style={{ color: '#ef4444' }}>{formatPredictionLabel(item.prediction)}</strong>
-                  <span style={{ color: 'var(--muted)', fontSize: '12px', fontWeight: 900, textTransform: 'capitalize' }}>{item.input_type || 'text'}</span>
+              <div key={item.id} className="sg-record-row risk">
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+                    <strong style={{ color: 'var(--sg-red)' }}>{formatPredictionLabel(item.prediction)}</strong>
+                    <span style={{ color: 'var(--sg-text-muted)', fontSize: 11, fontWeight: 800, textTransform: 'capitalize' }}>{item.input_type || 'text'}</span>
+                  </div>
+                  <p className="sg-clamp-2" style={{ margin: '0 0 6px', color: 'var(--sg-text)', fontSize: 13, lineHeight: 1.45 }}>{rowText(item)}</p>
+                  <small style={{ color: 'var(--sg-text-muted)' }}>{formatDateTime(item.created_at)}</small>
                 </div>
-                <p style={{ margin: '0 0 8px', color: 'var(--text)', lineHeight: 1.45, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{rowText(item)}</p>
-                <span style={{ color: 'var(--muted)', fontSize: '12px' }}>{formatDateTime(item.created_at)}</span>
               </div>
             ))}
-            {!riskyPredictions.length && <EmptyState text="No offensive records in the queue" />}
+            {!riskyPredictions.length && <div className="sg-state"><p>No offensive records in the queue</p></div>}
           </div>
-        </Panel>
+        </Card>
       </section>
-
-      <SectionIntro
-        title="Administrative Management"
-        text="Account administration is available as a dedicated page, while this dashboard remains focused on system evidence and operational summaries."
-      />
-      <section className="dashboard-admin-grid" style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-        <Panel title="User Access Summary" icon={<UserCog size={18} />} action={<Link to="/users">Open Users <ChevronRight size={14} /></Link>}>
-          <div className="responsive-grid dashboard-mini-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-            <MiniStat icon={<UserCheck size={18} />} label="Active Users" value={userStats.active} color="#10b981" />
-            <MiniStat icon={<AlertTriangle size={18} />} label="Inactive Users" value={userStats.inactive} color="#f59e0b" />
-            <MiniStat icon={<UserCog size={18} />} label="Admins" value={userStats.admins} color="#6366f1" />
-            <MiniStat icon={<Users size={18} />} label="Normal Users" value={userStats.regular} color="#0ea5e9" />
-          </div>
-        </Panel>
-
-        <Panel title="Input Sources" icon={<FileText size={18} />}>
-          <div style={{ display: 'grid', gap: '14px' }}>
-            <ProgressRow icon={<Type size={18} />} label="Text Analysis" value={stats.text} total={stats.total} color="#6366f1" />
-            <ProgressRow icon={<ImageIcon size={18} />} label="Image Analysis" value={stats.image} total={stats.total} color="#10b981" />
-          </div>
-        </Panel>
-
-        <Panel title="Management Workspace" icon={<Users size={18} />} action={<Link to="/users">Manage <ChevronRight size={14} /></Link>}>
-          <div style={{ display: 'grid', gap: '14px' }}>
-            <p style={{ margin: 0, color: 'var(--muted)', lineHeight: 1.6 }}>
-              User records, role updates, account activation, and administrative actions are handled on a separate user management page.
-            </p>
-            <Link to="/users" className="btn primary" style={{ width: 'fit-content', gap: '8px' }}>
-              Open User Management <ChevronRight size={16} />
-            </Link>
-          </div>
-        </Panel>
-      </section>
-
-      <style>{`
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        .spin { animation: spin 1s linear infinite; }
-        @media(max-width: 1200px) {
-          .dashboard-overview-grid,
-          .dashboard-admin-grid,
-          .dashboard-main-grid {
-            grid-template-columns: 1fr 1fr !important;
-          }
-        }
-        @media(max-width: 900px) {
-          .dashboard-overview-grid,
-          .dashboard-admin-grid,
-          .dashboard-main-grid {
-            grid-template-columns: 1fr !important;
-          }
-        }
-      `}</style>
     </main>
   );
 };
 
-const MetricCard = ({ icon, color, title, value, subtitle }) => (
-  <div className="card" style={{ padding: '22px', borderRadius: '16px', border: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: '16px' }}>
-    <div style={{ width: '56px', height: '56px', borderRadius: '14px', background: `${color}18`, color, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-      {icon}
-    </div>
+const OverviewCard = ({ icon, tone, title, text, detail }) => (
+  <article className={`sg-card sg-card-body`} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+    <IconChip icon={icon} className={tone} size={22} />
     <div style={{ minWidth: 0 }}>
-      <p style={{ margin: '0 0 5px', color: 'var(--muted)', fontSize: '13px', fontWeight: 800 }}>{title}</p>
-      <h2 style={{ margin: '0 0 4px', color: 'var(--text)', fontSize: '28px', lineHeight: 1 }}>{value}</h2>
-      <p style={{ margin: 0, color, fontSize: '13px', fontWeight: 800 }}>{subtitle}</p>
-    </div>
-  </div>
-);
-
-const Panel = ({ title, icon, action, children }) => (
-  <section className="card" style={{ padding: '22px', borderRadius: '16px', border: '1px solid var(--line)', minWidth: 0 }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
-      <h3 style={{ margin: 0, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text)' }}>
-        <span style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.12)', color: '#6366f1', display: 'grid', placeItems: 'center' }}>{icon}</span>
-        {title}
-      </h3>
-      {action && <div style={{ fontSize: '13px', fontWeight: 900, display: 'flex', alignItems: 'center', gap: '4px' }}>{action}</div>}
-    </div>
-    {children}
-  </section>
-);
-
-const SectionIntro = ({ title, text }) => (
-  <div className="dashboard-section-intro">
-    <div>
-      <span>Research section</span>
-      <h2>{title}</h2>
-      <p>{text}</p>
-    </div>
-  </div>
-);
-
-const AcademicOverviewCard = ({ icon, title, text, detail, color }) => (
-  <article className="card academic-overview-card">
-    <div className="academic-overview-icon" style={{ color, background: `${color}14` }}>{icon}</div>
-    <div>
-      <span>{title}</span>
-      <p>{text}</p>
-      <strong style={{ color }}>{detail}</strong>
+      <span style={{ display: 'block', marginBottom: 4, color: 'var(--sg-text)', fontSize: 13.5, fontWeight: 750 }}>{title}</span>
+      <p style={{ margin: '0 0 8px', color: 'var(--sg-text-muted)', fontSize: 12.5, lineHeight: 1.55 }}>{text}</p>
+      <strong style={{ color: 'var(--sg-primary)', fontSize: 12.5 }}>{detail}</strong>
     </div>
   </article>
 );
 
-const LegendRow = ({ color, label, value }) => (
-  <div>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
-      <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: color }} />
-      <span style={{ color: 'var(--text)', fontWeight: 900, fontSize: '14px' }}>{label}</span>
-    </div>
-    <div style={{ color: 'var(--muted)', fontSize: '13px', marginLeft: '17px' }}>{value}</div>
-  </div>
-);
-
-const HealthRow = ({ icon, label, value, color }) => (
-  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '11px 0', borderBottom: '1px solid var(--line)' }}>
-    <span style={{ display: 'flex', alignItems: 'center', gap: '9px', color: 'var(--muted)', fontWeight: 800, fontSize: '13px' }}>{icon}{label}</span>
-    <strong style={{ color, textAlign: 'right' }}>{value}</strong>
-  </div>
-);
-
-const MiniStat = ({ icon, label, value, color }) => (
-  <div style={{ border: `1px solid ${color}30`, background: `${color}0d`, borderRadius: '12px', padding: '14px' }}>
-    <div style={{ color, marginBottom: '10px' }}>{icon}</div>
-    <div style={{ color: 'var(--text)', fontSize: '22px', fontWeight: 950 }}>{value}</div>
-    <div style={{ color: 'var(--muted)', fontSize: '12px', fontWeight: 800 }}>{label}</div>
-  </div>
-);
-
-const ProgressRow = ({ icon, label, value, total, color }) => {
-  const percent = total ? Math.round((value / total) * 100) : 0;
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '9px', color: 'var(--text)', fontWeight: 900 }}>{icon}{label}</span>
-        <strong style={{ color }}>{value}</strong>
-      </div>
-      <div style={{ height: '10px', borderRadius: '999px', background: 'var(--bg)', overflow: 'hidden' }}>
-        <div style={{ width: `${percent}%`, height: '100%', background: color, borderRadius: '999px' }} />
-      </div>
-      <div style={{ color: 'var(--muted)', fontSize: '12px', marginTop: '5px', fontWeight: 700 }}>{percent}% of saved predictions</div>
-    </div>
-  );
-};
-
 const RecentHistoryAction = ({ lastUpdated, loading, onRefresh }) => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-    <span style={{ color: 'var(--muted)', fontSize: '12px', fontWeight: 800 }}>
+  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+    <span style={{ color: 'var(--sg-text-muted)', fontSize: 11.5, fontWeight: 700 }}>
       {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Updating...'}
     </span>
-    <button
-      type="button"
-      onClick={onRefresh}
-      disabled={loading}
-      aria-label="Refresh recent prediction history"
-      style={{
-        width: '32px',
-        height: '32px',
-        borderRadius: '8px',
-        border: '1px solid var(--line)',
-        background: 'var(--bg)',
-        color: 'var(--text)',
-        display: 'grid',
-        placeItems: 'center',
-        cursor: loading ? 'not-allowed' : 'pointer',
-        opacity: loading ? 0.65 : 1,
-      }}
-    >
-      <RefreshCw size={15} className={loading ? 'spin' : ''} />
+    <button type="button" onClick={onRefresh} disabled={loading} aria-label="Refresh recent prediction history" className="sg-icon-button" style={{ width: 32, height: 32 }}>
+      <RefreshCw size={14} className={loading ? 'sg-spin' : ''} />
     </button>
-    <Link to="/history" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-      View All <ChevronRight size={14} />
-    </Link>
+    <Link to="/history" className="sg-button sg-button-ghost" style={{ minHeight: 32, padding: '0 10px' }}>View All <ChevronRight size={14} /></Link>
   </div>
 );
 
 const PredictionRow = ({ item }) => {
   const offensive = isOffensivePrediction(item.prediction);
-  const neutral = isReviewPrediction(item.prediction);
-  const color = neutral ? '#64748b' : offensive ? '#ef4444' : '#10b981';
+  const unclassified = isUnclassifiedPrediction(item.prediction);
+  const badgeClass = unclassified ? 'sg-badge-warning' : offensive ? 'sg-badge-offensive' : 'sg-badge-safe';
 
   return (
     <tr>
-      <td style={td}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: 'var(--text)', fontWeight: 800 }}>
-          {item.input_type === 'image' ? <ImageIcon size={16} color="#10b981" /> : <Type size={16} color="#6366f1" />}
+      <td>
+        <span className="sg-type-cell">
+          {item.input_type === 'image' ? <ImageIcon size={15} /> : <Type size={15} />}
           {item.input_type || 'text'}
         </span>
       </td>
-      <td style={{ ...td, maxWidth: '260px' }}>
-        <span style={{ color: 'var(--text)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rowText(item)}</span>
+      <td style={{ maxWidth: 260 }}>
+        <span className="sg-content-preview">{rowText(item)}</span>
       </td>
-      <td style={{ ...td, textAlign: 'center' }}>
-        <span style={{ background: `${color}18`, color, padding: '5px 9px', borderRadius: '6px', fontSize: '11px', fontWeight: 900 }}>
-          {formatPredictionLabel(item.prediction)}
-        </span>
+      <td style={{ textAlign: 'center' }}>
+        <span className={`sg-badge ${badgeClass}`}>{formatPredictionLabel(item.prediction)}</span>
       </td>
-      <td style={{ ...td, textAlign: 'right', color: 'var(--muted)', fontSize: '13px' }}>{formatDateTime(item.created_at)}</td>
+      <td style={{ textAlign: 'right', color: 'var(--sg-text-muted)', fontSize: 12 }}>{formatDateTime(item.created_at)}</td>
     </tr>
   );
 };
 
 const ModelRankingTable = ({ results }) => (
-  <div className="model-ranking-table">
-    <div className="model-ranking-head">
-      <span>Model</span>
-      <span>Type</span>
-      <span>Accuracy</span>
-      <span>Precision</span>
-      <span>Recall</span>
-      <span>F1-score</span>
-    </div>
-    {results.map((item, index) => (
-      <div className="model-ranking-row" key={item.model}>
-        <strong>
-          <small>#{index + 1}</small>
-          {item.model}
-        </strong>
-        <span>{item.type}</span>
-        <span>{percent(item.accuracy)}</span>
-        <span>{percent(item.precision)}</span>
-        <span>{percent(item.recall)}</span>
-        <span className="f1-value">{percent(item.f1)}</span>
-      </div>
-    ))}
+  <div className="sg-table-wrap">
+    <table className="sg-table">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Type</th>
+          <th>Accuracy</th>
+          <th>Precision</th>
+          <th>Recall</th>
+          <th>F1-score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {results.map((item, index) => (
+          <tr key={item.model}>
+            <td style={{ color: 'var(--sg-text)', fontWeight: 700 }}>#{index + 1} {item.model}</td>
+            <td>{item.type}</td>
+            <td>{percent(item.accuracy)}</td>
+            <td>{percent(item.precision)}</td>
+            <td>{percent(item.recall)}</td>
+            <td style={{ color: 'var(--sg-teal)', fontWeight: 750 }}>{percent(item.f1)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   </div>
 );
 
-const ResearchChartCard = ({ chart }) => (
-  <article className="card research-chart-card">
-    <div>
-      <h3>{chart.title}</h3>
-      <p>{chart.text}</p>
-    </div>
-    <img src={chart.src} alt={chart.title} loading="lazy" />
-  </article>
-);
-
-const EmptyState = ({ text }) => (
-  <div style={{ minHeight: '120px', display: 'grid', placeItems: 'center', color: 'var(--muted)', textAlign: 'center', fontWeight: 800 }}>{text}</div>
-);
-
-const th = { textAlign: 'left', padding: '10px 0', borderBottom: '1px solid var(--line)', color: 'var(--muted)', fontSize: '12px', fontWeight: 900 };
-const td = { padding: '14px 10px 14px 0', borderBottom: '1px solid var(--line)', verticalAlign: 'middle' };
+const toCsvCell = (value) => {
+  let text = String(value ?? '');
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+};
 
 export default Dashboard;

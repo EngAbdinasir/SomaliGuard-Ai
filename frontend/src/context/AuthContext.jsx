@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { clearToken, getProfile, getToken, loginUser, loginWithGoogleCredential, registerUser, setToken, uploadProfilePicture } from '../services/api';
 
 const AuthContext = createContext();
 
+// Context consumers intentionally share this module with the provider.
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {

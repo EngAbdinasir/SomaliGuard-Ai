@@ -1,11 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  AlertCircle,
   ArrowRight,
   CheckCircle2,
-  Eye,
-  EyeOff,
   KeyRound,
   Lock,
   MailCheck,
@@ -13,6 +10,15 @@ import {
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
+import {
+  AuthCardTopline,
+  AuthField,
+  AuthNotice,
+  AuthPasswordInput,
+  AuthPrimaryButton,
+  AuthSwitchLink,
+  AuthVisualPanel,
+} from '../components/AuthUI';
 import { resetPassword } from '../services/api';
 
 const ResetPassword = () => {
@@ -34,6 +40,7 @@ const ResetPassword = () => {
     event.preventDefault();
     setError('');
     setMessage('');
+    if (submitting) return;
 
     const validationError = validatePassword(password, confirmPassword);
     if (validationError) {
@@ -56,79 +63,64 @@ const ResetPassword = () => {
   return (
     <main className="login-redesign-page recovery-redesign-page">
       <section className="login-redesign-shell reset-redesign-shell">
-        <aside className="login-redesign-panel reset-redesign-panel">
-          <div className="login-redesign-brand">
-            <span>🧠</span>
-            <div>
-              <strong>SomaliGuard AI</strong>
-              <small>Password security</small>
-            </div>
-          </div>
-
-          <div className="login-redesign-copy">
-            <span className="login-redesign-kicker"><ShieldCheck size={15} /> Secure reset</span>
-            <h1>Create a stronger SomaliGuard AI password.</h1>
-            <p>Use a secure password to protect your prediction history, profile, and moderation workspace.</p>
-          </div>
-
-          <div className="login-redesign-signals">
-            <div>
-              <KeyRound size={20} />
-              <span>Reset token</span>
-            </div>
-            <div>
-              <MailCheck size={20} />
-              <span>Email recovery</span>
-            </div>
-            <div>
-              <ScanSearch size={20} />
-              <span>Protected history</span>
-            </div>
-          </div>
-        </aside>
+        <AuthVisualPanel
+          className="reset-redesign-panel"
+          subtitle="Password security"
+          kickerIcon={<ShieldCheck size={15} />}
+          kicker="Secure password reset"
+          title="Protect every saved analysis with a stronger password."
+          description="Choose a password that secures your profile, prediction history, and access to the SomaliGuard AI workspace."
+          signals={[
+            { icon: <KeyRound size={20} />, label: 'Reset token' },
+            { icon: <MailCheck size={20} />, label: 'Email recovery' },
+            { icon: <ScanSearch size={20} />, label: 'Protected data' },
+          ]}
+        />
 
         <section className="login-redesign-card reset-redesign-card">
+          <AuthCardTopline status="Password update" />
           <div className="login-redesign-card-header">
             <span className="login-redesign-lock"><Lock size={22} /></span>
             <h2>Reset password</h2>
             <p>Choose a strong password to secure your SomaliGuard AI account.</p>
           </div>
 
-          {!token && <Notice type="error" text="This reset link is incomplete. Please request a new password reset email." />}
+          <AuthNotice text={!token ? 'This reset link is incomplete. Please request a new password reset email.' : error} />
+          <AuthNotice type="success" text={message} />
 
           <form onSubmit={handleSubmit} className="reset-password-form">
-            <PasswordInput
-              label="New password"
-              value={password}
-              onChange={setPassword}
-              visible={showPassword}
-              onToggle={() => setShowPassword((value) => !value)}
-            />
+            <AuthField label="New password" icon={<Lock size={18} />}>
+              <AuthPasswordInput
+                value={password}
+                onChange={setPassword}
+                visible={showPassword}
+                onToggle={() => setShowPassword((value) => !value)}
+                autoComplete="new-password"
+                disabled={!token || submitting}
+              />
+            </AuthField>
 
-            <PasswordInput
-              label="Confirm new password"
-              value={confirmPassword}
-              onChange={setConfirmPassword}
-              visible={showConfirmPassword}
-              onToggle={() => setShowConfirmPassword((value) => !value)}
-            />
+            <AuthField label="Confirm new password" icon={<Lock size={18} />}>
+              <AuthPasswordInput
+                value={confirmPassword}
+                onChange={setConfirmPassword}
+                visible={showConfirmPassword}
+                onToggle={() => setShowConfirmPassword((value) => !value)}
+                autoComplete="new-password"
+                disabled={!token || submitting}
+              />
+            </AuthField>
 
             <PasswordStrength state={passwordState} />
             <PasswordRules rules={passwordState.rules} />
 
-            {error && <Notice type="error" text={error} />}
-            {message && <Notice type="success" text={message} />}
-
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="auth-primary-button reset-submit-button"
-              style={{ opacity: canSubmit ? 1 : 0.55, cursor: canSubmit ? 'pointer' : 'not-allowed' }}
-            >
+            <AuthPrimaryButton loading={submitting} disabled={!canSubmit}>
               {submitting ? 'Resetting password...' : 'Reset password'} <ArrowRight size={16} />
-            </button>
+            </AuthPrimaryButton>
 
-            <Link to="/login" className="auth-back-link">Back to login</Link>
+            <AuthSwitchLink>
+              <Link to="/login">Back to login</Link>
+            </AuthSwitchLink>
           </form>
         </section>
       </section>
@@ -158,137 +150,27 @@ const getPasswordState = (password, confirmPassword) => {
   return { rules, score, label, color, valid: score === rules.length };
 };
 
-const FieldLabel = ({ icon, text }) => (
-  <label style={label}>
-    <span style={{ color: '#3b1cf6', display: 'inline-flex' }}>{icon}</span>
-    {text}
-  </label>
-);
-
-const PasswordInput = ({ label: inputLabel, value, onChange, visible, onToggle }) => (
-  <div style={{ display: 'grid', gap: '10px' }}>
-    <FieldLabel icon={<Lock size={17} />} text={inputLabel} />
-    <div style={inputWrap}>
-      <Lock size={18} style={inputIcon} />
-      <input
-        type={visible ? 'text' : 'password'}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        required
-        minLength={8}
-        autoComplete="new-password"
-        placeholder="Enter password"
-        style={passwordInput}
-      />
-      <button type="button" onClick={onToggle} aria-label={visible ? 'Hide password' : 'Show password'} style={iconButton}>
-        {visible ? <EyeOff size={18} /> : <Eye size={18} />}
-      </button>
-    </div>
-  </div>
-);
-
 const PasswordStrength = ({ state }) => (
-  <div style={{ display: 'grid', gap: '8px' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', color: 'var(--muted)', fontSize: '13px', fontWeight: 800 }}>
+  <div className="password-strength">
+    <div className="password-strength-label">
       <span>Password strength</span>
       <span style={{ color: state.color }}>{state.label}</span>
     </div>
-    <div style={{ height: '8px', borderRadius: '999px', background: 'var(--bg)', border: '1px solid var(--line)', overflow: 'hidden' }}>
-      <div style={{ width: `${(state.score / 4) * 100}%`, height: '100%', background: state.color, borderRadius: '999px', transition: 'width 180ms ease, background 180ms ease' }} />
+    <div className="password-strength-track">
+      <div style={{ width: `${(state.score / 4) * 100}%`, background: state.color }} />
     </div>
   </div>
 );
 
 const PasswordRules = ({ rules }) => (
-  <div style={rulesGrid}>
+  <div className="password-rules">
     {rules.map((rule) => (
-      <span key={rule.label} style={{ ...ruleItem, color: rule.valid ? '#047857' : 'var(--muted)' }}>
+      <span key={rule.label} className={rule.valid ? 'valid' : ''}>
         {rule.valid ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
         {rule.label}
       </span>
     ))}
   </div>
 );
-
-const Notice = ({ type, text }) => {
-  const success = type === 'success';
-  return (
-    <div className={success ? '' : 'alert-error'} style={{ ...notice, background: success ? 'rgba(16, 185, 129, 0.08)' : undefined, color: success ? '#047857' : undefined, borderColor: success ? 'rgba(16, 185, 129, 0.22)' : undefined }}>
-      {success ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}
-      <span>{text}</span>
-    </div>
-  );
-};
-
-const label = {
-  margin: 0,
-  color: 'var(--text)',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  fontWeight: 900,
-  fontSize: '14px',
-};
-
-const inputWrap = {
-  position: 'relative',
-  display: 'flex',
-  alignItems: 'center',
-};
-
-const inputIcon = {
-  position: 'absolute',
-  left: '14px',
-  color: 'var(--muted)',
-};
-
-const passwordInput = {
-  width: '100%',
-  borderRadius: '12px',
-  border: '1px solid var(--line)',
-  background: 'var(--bg)',
-  color: 'var(--text)',
-  padding: '14px 48px 14px 44px',
-  fontSize: '15px',
-  outline: 0,
-};
-
-const iconButton = {
-  position: 'absolute',
-  right: '12px',
-  width: '32px',
-  height: '32px',
-  border: 0,
-  background: 'transparent',
-  color: 'var(--muted)',
-  display: 'grid',
-  placeItems: 'center',
-  cursor: 'pointer',
-};
-
-const rulesGrid = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: '9px 12px',
-  fontSize: '13px',
-};
-
-const ruleItem = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '7px',
-  fontWeight: 800,
-};
-
-const notice = {
-  padding: '12px 14px',
-  borderRadius: '10px',
-  fontSize: '14px',
-  border: '1px solid transparent',
-  display: 'flex',
-  gap: '9px',
-  alignItems: 'center',
-  fontWeight: 700,
-};
 
 export default ResetPassword;

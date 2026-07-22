@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const GOOGLE_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
 
@@ -46,10 +46,11 @@ const GoogleAuthButton = ({ onCredential, text = 'signin_with', disabled = false
           },
         });
         buttonRef.current.innerHTML = '';
+        const buttonWidth = Math.min(360, Math.max(280, buttonRef.current.clientWidth || 320));
         window.google.accounts.id.renderButton(buttonRef.current, {
           theme: 'outline',
           size: 'large',
-          width: 384,
+          width: buttonWidth,
           text,
           shape: 'rectangular',
         });

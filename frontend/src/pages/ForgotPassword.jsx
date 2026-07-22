@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, KeyRound, Mail, MailCheck, ScanSearch, ShieldCheck } from 'lucide-react';
 import {
+  AuthCardTopline,
   AuthField,
   AuthInput,
   AuthNotice,
   AuthPrimaryButton,
   AuthSwitchLink,
+  AuthVisualPanel,
 } from '../components/AuthUI';
 import { forgotPassword } from '../services/api';
 
@@ -20,10 +22,21 @@ const ForgotPassword = () => {
     event.preventDefault();
     setError('');
     setMessage('');
+    if (submitting) return;
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError('Please enter your email address.');
+      return;
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
 
     setSubmitting(true);
     try {
-      const data = await forgotPassword(email);
+      const data = await forgotPassword(normalizedEmail);
       setMessage(data.message);
     } catch (err) {
       setError(err.message);
@@ -35,38 +48,22 @@ const ForgotPassword = () => {
   return (
     <main className="login-redesign-page recovery-redesign-page">
       <section className="login-redesign-shell recovery-redesign-shell">
-        <aside className="login-redesign-panel recovery-redesign-panel">
-          <div className="login-redesign-brand">
-            <span>🧠</span>
-            <div>
-              <strong>SomaliGuard AI</strong>
-              <small>Account recovery</small>
-            </div>
-          </div>
-
-          <div className="login-redesign-copy">
-            <span className="login-redesign-kicker"><KeyRound size={15} /> Secure recovery</span>
-            <h1>Recover access to your research workspace.</h1>
-            <p>Enter your email address and SomaliGuard AI will send a password reset link if the account exists.</p>
-          </div>
-
-          <div className="login-redesign-signals">
-            <div>
-              <MailCheck size={20} />
-              <span>Email reset link</span>
-            </div>
-            <div>
-              <ShieldCheck size={20} />
-              <span>Protected account</span>
-            </div>
-            <div>
-              <ScanSearch size={20} />
-              <span>Return to analysis</span>
-            </div>
-          </div>
-        </aside>
+        <AuthVisualPanel
+          className="recovery-redesign-panel"
+          subtitle="Secure account recovery"
+          kickerIcon={<KeyRound size={15} />}
+          kicker="Recover access"
+          title="Return securely to your research workspace."
+          description="Request a time-limited reset link and create a new password without exposing whether an account exists."
+          signals={[
+            { icon: <MailCheck size={20} />, label: 'Email link' },
+            { icon: <ShieldCheck size={20} />, label: 'Protected reset' },
+            { icon: <ScanSearch size={20} />, label: 'Resume research' },
+          ]}
+        />
 
         <section className="login-redesign-card recovery-redesign-card">
+          <AuthCardTopline status="Account recovery" />
           <div className="login-redesign-card-header">
             <span className="login-redesign-lock"><Mail size={22} /></span>
             <h2>Forgot password</h2>
@@ -97,6 +94,8 @@ const ForgotPassword = () => {
           <AuthSwitchLink>
             <Link to="/login">Back to login</Link>
           </AuthSwitchLink>
+
+          <p className="auth-card-footnote"><ShieldCheck size={14} /> Reset links are time-limited for your security.</p>
         </section>
       </section>
     </main>
